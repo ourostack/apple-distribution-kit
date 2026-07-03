@@ -37,7 +37,7 @@ describe("CLI scaffold", () => {
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
 
     await expect(cli(["--version"])).resolves.toBe(0);
-    expect(stdout.join("").trim()).toMatch(/^0\\.1\\.0$/);
+    expect(stdout.join("").trim()).toMatch(/^0\.1\.0$/);
   });
 
   it("returns structured JSON for unknown commands", async () => {
