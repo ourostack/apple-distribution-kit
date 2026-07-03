@@ -5,6 +5,7 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     coverage: {
       provider: "v8",
+      include: ["src/cli-core.ts", "src/config.ts", "src/index.ts", "src/manifest-path.ts"],
       reporter: ["text", "json-summary"],
       thresholds: {
         lines: 100,

@@ -1,5 +1,5 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCli, discoverConfigPath, loadConfig, resolveManifestPath } from "../src/index.js";
@@ -32,6 +32,14 @@ describe("CLI scaffold", () => {
     expect(stdout.join("")).toContain("asc smoke");
   });
 
+  it("prints help for empty arguments", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli([])).resolves.toBe(0);
+    expect(stdout.join("")).toContain("Usage:");
+  });
+
   it("prints package version", async () => {
     const stdout: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
@@ -55,6 +63,38 @@ describe("CLI scaffold", () => {
       }
     });
   });
+
+  it("returns text errors for unknown commands", async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: (chunk) => stderr.push(chunk) });
+
+    await expect(cli(["nope"])).resolves.toBe(64);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("")).toBe("Unknown command: nope\n");
+  });
+
+  it("returns structured not-implemented errors for manifest validation", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli(["--json", "manifest", "validate"])).resolves.toBe(70);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: {
+        code: "manifest_validate_not_implemented",
+        message: "manifest validate is not implemented yet"
+      }
+    });
+  });
+
+  it("returns text not-implemented errors for asc smoke", async () => {
+    const stderr: string[] = [];
+    const cli = createCli({ stdout: () => undefined, stderr: (chunk) => stderr.push(chunk) });
+
+    await expect(cli(["asc", "smoke"])).resolves.toBe(70);
+    expect(stderr.join("")).toBe("asc smoke is not implemented yet\n");
+  });
 });
 
 describe("config discovery", () => {
@@ -65,6 +105,18 @@ describe("config discovery", () => {
   it("uses APPLE_DISTRIBUTION_KIT_CONFIG from the environment", () => {
     expect(discoverConfigPath({ env: { APPLE_DISTRIBUTION_KIT_CONFIG: "/tmp/from-env.json" } })).toBe(
       "/tmp/from-env.json"
+    );
+  });
+
+  it("falls back to the standard Application Support path", () => {
+    expect(discoverConfigPath({ env: {}, homeDir: "/Users/example" })).toBe(
+      "/Users/example/Library/Application Support/AppleDistributionKit/app-store-connect/config.json"
+    );
+  });
+
+  it("uses the current home directory when no home override is provided", () => {
+    expect(discoverConfigPath({ env: {} })).toBe(
+      join(homedir(), "Library", "Application Support", "AppleDistributionKit", "app-store-connect", "config.json")
     );
   });
 
@@ -87,6 +139,29 @@ describe("config discovery", () => {
       keyId: "8566429KZF",
       privateKeyPath
     });
+  });
+
+  it("rejects non-object config", async () => {
+    const dir = await makeTempDir();
+    const configPath = join(dir, "config.json");
+    await writeFile(configPath, "null");
+
+    await expect(loadConfig(configPath)).rejects.toThrow("Invalid App Store Connect config");
+  });
+
+  it.each([
+    [{ issuerId: "", keyId: "KEY", privateKeyPath: "/tmp/key.p8" }],
+    [{ issuerId: "issuer", keyId: "", privateKeyPath: "/tmp/key.p8" }],
+    [{ issuerId: "issuer", keyId: "KEY", privateKeyPath: "" }],
+    [{ issuerId: 7, keyId: "KEY", privateKeyPath: "/tmp/key.p8" }],
+    [{ issuerId: "issuer", keyId: 7, privateKeyPath: "/tmp/key.p8" }],
+    [{ issuerId: "issuer", keyId: "KEY", privateKeyPath: 7 }]
+  ])("rejects malformed config %#", async (config) => {
+    const dir = await makeTempDir();
+    const configPath = join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify(config));
+
+    await expect(loadConfig(configPath)).rejects.toThrow("Invalid App Store Connect config");
   });
 });
 
