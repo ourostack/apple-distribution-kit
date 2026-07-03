@@ -153,6 +153,28 @@ describe("CLI scaffold", () => {
     await expect(cli(["asc", "smoke", "--config", "/tmp/does-not-exist-adk.json"])).resolves.toBe(69);
     expect(stderr.join("")).toContain("no such file or directory");
   });
+
+  it("prints JSON for successful asc smoke through injected dependencies", async () => {
+    const stdout: string[] = [];
+    const cli = createCli(
+      { stdout: (chunk) => stdout.push(chunk), stderr: () => undefined },
+      { smokeAppStoreConnect: async ({ configPath }) => ({ configPath, data: [] }) }
+    );
+
+    await expect(cli(["--json", "asc", "smoke", "--config", "/tmp/config.json"])).resolves.toBe(0);
+    expect(JSON.parse(stdout.join(""))).toEqual({ ok: true, result: { configPath: "/tmp/config.json", data: [] } });
+  });
+
+  it("prints text for successful asc smoke through default config discovery", async () => {
+    const stdout: string[] = [];
+    const cli = createCli(
+      { stdout: (chunk) => stdout.push(chunk), stderr: () => undefined },
+      { smokeAppStoreConnect: async ({ configPath }) => ({ configPath }) }
+    );
+
+    await expect(cli(["asc", "smoke"])).resolves.toBe(0);
+    expect(stdout.join("")).toBe("App Store Connect API smoke passed\n");
+  });
 });
 
 describe("config discovery", () => {

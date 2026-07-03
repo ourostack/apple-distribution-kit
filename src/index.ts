@@ -13,6 +13,7 @@ export { createPlan, createRequiresHuman } from "./plan.js";
 export { redactSecrets } from "./redaction.js";
 export { resolveManifestPath } from "./manifest-path.js";
 export type { Cli, CliIo } from "./cli-core.js";
+export type { CliDependencies } from "./cli-core.js";
 export type { AppStoreConnectClient, AppStoreConnectClientOptions, AscAuth, JwtInput, ProviderResolution } from "./asc.js";
 export type { AppStoreConnectConfig, ConfigDiscoveryOptions } from "./config.js";
 export type {

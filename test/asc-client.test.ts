@@ -8,7 +8,8 @@ import {
   createAppStoreConnectClient,
   loadAscAuth,
   resolveProviderPublicId,
-  signAppStoreConnectJwt
+  signAppStoreConnectJwt,
+  smokeAppStoreConnect
 } from "../src/index.js";
 
 const tempDirs: string[] = [];
@@ -56,6 +57,22 @@ describe("App Store Connect JWT", () => {
         Buffer.from(signature!.replace(/-/g, "+").replace(/_/g, "/"), "base64")
       )
     ).toBe(true);
+  });
+
+  it("uses default issue time and duration when omitted", () => {
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const before = Math.floor(Date.now() / 1000);
+    const token = signAppStoreConnectJwt({
+      issuerId: "issuer-id",
+      keyId: "KEY123",
+      privateKeyPem: privateKey.export({ format: "pem", type: "pkcs8" }).toString()
+    });
+    const after = Math.floor(Date.now() / 1000);
+    const payload = decodePart(token, 1);
+
+    expect(payload.iat).toBeGreaterThanOrEqual(before);
+    expect(payload.iat).toBeLessThanOrEqual(after);
+    expect(payload.exp - payload.iat).toBe(1200);
   });
 
   it("loads auth config and private key from disk", async () => {
@@ -121,6 +138,61 @@ describe("App Store Connect client", () => {
     });
   });
 
+  it.each([408, 409, 425, 500])("marks HTTP %s as retryable", async (status) => {
+    const client = createAppStoreConnectClient({
+      auth: {
+        issuerId: "issuer",
+        keyId: "KEY",
+        privateKeyPem: generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "pem", type: "pkcs8" }).toString()
+      },
+      fetch: async () => new Response(JSON.stringify({}), { status })
+    });
+
+    await expect(client.get("/v1/apps")).rejects.toMatchObject({ retryable: true, code: "apple_error" });
+  });
+
+  it("uses fallback Apple error strings when error fields are missing", async () => {
+    const client = createAppStoreConnectClient({
+      auth: {
+        issuerId: "issuer",
+        keyId: "KEY",
+        privateKeyPem: generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "pem", type: "pkcs8" }).toString()
+      },
+      fetch: async () => new Response(JSON.stringify({ errors: [{}] }), { status: 400 })
+    });
+
+    await expect(client.get("/v1/apps")).rejects.toMatchObject({
+      status: 400,
+      code: "apple_error",
+      message: "Apple request failed",
+      retryable: false
+    });
+  });
+
+  it("supports global fetch and custom base URLs", async () => {
+    const calls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify({ data: [{ id: "1" }] }), { status: 200 });
+    }) as typeof fetch;
+    const client = createAppStoreConnectClient({
+      auth: {
+        issuerId: "issuer",
+        keyId: "KEY",
+        privateKeyPem: generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "pem", type: "pkcs8" }).toString()
+      },
+      baseUrl: "https://example.test"
+    });
+
+    try {
+      await expect(client.get("/v1/apps")).resolves.toEqual({ data: [{ id: "1" }] });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(calls).toEqual(["https://example.test/v1/apps"]);
+  });
+
   it("classifies malformed successful responses", async () => {
     const client = createAppStoreConnectClient({
       auth: {
@@ -133,6 +205,44 @@ describe("App Store Connect client", () => {
 
     await expect(client.get("/v1/apps")).rejects.toBeInstanceOf(AppStoreConnectError);
     await expect(client.get("/v1/apps")).rejects.toMatchObject({ code: "invalid_json", retryable: false });
+  });
+
+  it("runs smoke with redacted results", async () => {
+    const dir = await makeTempDir();
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const keyPath = join(dir, "AuthKey_TEST.p8");
+    const configPath = join(dir, "config.json");
+    await writeFile(keyPath, privateKey.export({ format: "pem", type: "pkcs8" }).toString());
+    await writeFile(configPath, JSON.stringify({ issuerId: "issuer", keyId: "KEY", privateKeyPath: keyPath }));
+
+    await expect(
+      smokeAppStoreConnect({
+        configPath,
+        fetch: async () =>
+          new Response(JSON.stringify({ data: [], token: "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiIxMjMifQ.signature" }), {
+            status: 200
+          })
+      })
+    ).resolves.toEqual({ data: [], token: "[REDACTED_JWT]" });
+  });
+
+  it("runs smoke with global fetch and explicit time", async () => {
+    const dir = await makeTempDir();
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const keyPath = join(dir, "AuthKey_TEST.p8");
+    const configPath = join(dir, "config.json");
+    const originalFetch = globalThis.fetch;
+    await writeFile(keyPath, privateKey.export({ format: "pem", type: "pkcs8" }).toString());
+    await writeFile(configPath, JSON.stringify({ issuerId: "issuer", keyId: "KEY", privateKeyPath: keyPath }));
+    globalThis.fetch = (async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) as typeof fetch;
+
+    try {
+      await expect(smokeAppStoreConnect({ configPath, now: new Date("2026-07-03T12:00:00Z") })).resolves.toEqual({
+        data: []
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
@@ -154,5 +264,9 @@ describe("provider resolution", () => {
         evidence: { teamId: "TEAM" }
       }
     });
+  });
+
+  it("treats blank providerPublicId as missing", () => {
+    expect(resolveProviderPublicId({ team: { teamId: "TEAM", providerPublicId: " " } }).ok).toBe(false);
   });
 });

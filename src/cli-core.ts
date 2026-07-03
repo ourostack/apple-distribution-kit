@@ -12,6 +12,10 @@ export interface CliIo {
 
 export type Cli = (argv: string[]) => Promise<number>;
 
+export interface CliDependencies {
+  smokeAppStoreConnect?: typeof smokeAppStoreConnect;
+}
+
 interface CliError {
   code: string;
   message: string;
@@ -30,7 +34,8 @@ Commands:
   asc smoke           Verify App Store Connect API credentials without printing secrets
 `;
 
-export function createCli(io: CliIo): Cli {
+export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
+  const smoke = dependencies.smokeAppStoreConnect ?? smokeAppStoreConnect;
   return async (argv: string[]) => {
     const args = [...argv];
     const json = takeFlag(args, "--json");
@@ -51,7 +56,7 @@ export function createCli(io: CliIo): Cli {
       return validateManifestCommand(io, json, args);
     }
     if (command === "asc" && subcommand === "smoke") {
-      return ascSmokeCommand(io, json, args);
+      return ascSmokeCommand(io, json, args, smoke);
     }
 
     return fail(io, json, 64, {
@@ -61,10 +66,15 @@ export function createCli(io: CliIo): Cli {
   };
 }
 
-async function ascSmokeCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
+async function ascSmokeCommand(
+  io: CliIo,
+  json: boolean,
+  args: string[],
+  smoke: typeof smokeAppStoreConnect
+): Promise<number> {
   const configPath = optionValue(args, "--config") ?? discoverConfigPath({ env: process.env });
   try {
-    const result = await smokeAppStoreConnect({ configPath });
+    const result = await smoke({ configPath });
     if (json) {
       io.stdout(`${JSON.stringify({ ok: true, result }, null, 2)}\n`);
     } else {
@@ -112,10 +122,6 @@ function takeFlag(args: string[], flag: string): boolean {
   }
   args.splice(index, 1);
   return true;
-}
-
-function notImplemented(io: CliIo, json: boolean, code: string, message: string): number {
-  return fail(io, json, 70, { code, message });
 }
 
 function fail(io: CliIo, json: boolean, exitCode: number, error: CliError): number {
