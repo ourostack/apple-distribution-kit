@@ -74,18 +74,13 @@ describe("CLI scaffold", () => {
     expect(stderr.join("")).toBe("Unknown command: nope\n");
   });
 
-  it("returns structured not-implemented errors for manifest validation", async () => {
+  it("returns structured errors for missing manifest validation input", async () => {
     const stdout: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
 
-    await expect(cli(["--json", "manifest", "validate"])).resolves.toBe(70);
-    expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: {
-        code: "manifest_validate_not_implemented",
-        message: "manifest validate is not implemented yet"
-      }
-    });
+    await expect(cli(["--json", "manifest", "validate"])).resolves.toBe(65);
+    expect(JSON.parse(stdout.join("")).ok).toBe(false);
+    expect(JSON.parse(stdout.join("")).error.code).toBe("manifest_invalid");
   });
 
   it("returns text not-implemented errors for asc smoke", async () => {

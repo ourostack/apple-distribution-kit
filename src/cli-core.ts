@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadManifest } from "./manifest.js";
 
 export interface CliIo {
   stdout: (chunk: string) => void;
@@ -45,7 +46,7 @@ export function createCli(io: CliIo): Cli {
     const command = args[0];
     const subcommand = args[1];
     if (command === "manifest" && subcommand === "validate") {
-      return notImplemented(io, json, "manifest_validate_not_implemented", "manifest validate is not implemented yet");
+      return validateManifestCommand(io, json, args);
     }
     if (command === "asc" && subcommand === "smoke") {
       return notImplemented(io, json, "asc_smoke_not_implemented", "asc smoke is not implemented yet");
@@ -56,6 +57,32 @@ export function createCli(io: CliIo): Cli {
       message: `Unknown command: ${command}`
     });
   };
+}
+
+async function validateManifestCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
+  const manifestPath = optionValue(args, "--manifest") ?? "distribution/apple-distribution.json";
+  try {
+    await loadManifest(manifestPath);
+    if (json) {
+      io.stdout(`${JSON.stringify({ ok: true, manifestPath }, null, 2)}\n`);
+    } else {
+      io.stdout(`Manifest valid: ${manifestPath}\n`);
+    }
+    return 0;
+  } catch (error) {
+    return fail(io, json, 65, {
+      code: "manifest_invalid",
+      message: error instanceof Error ? error.message : "Manifest invalid"
+    });
+  }
+}
+
+function optionValue(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  if (index === -1) {
+    return undefined;
+  }
+  return args[index + 1];
 }
 
 function takeFlag(args: string[], flag: string): boolean {
