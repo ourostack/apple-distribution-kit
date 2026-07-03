@@ -73,6 +73,18 @@ describe("store request builder", () => {
       }
     ]);
   });
+
+  it("throws when the requested App Store channel is missing", () => {
+    expect(() =>
+      buildStoreRequests({
+        appId: "app-123",
+        versionId: "version-123",
+        buildId: "build-123",
+        manifest: manifestWithStore(),
+        channelId: "missing"
+      })
+    ).toThrow("App Store channel not found or incomplete: missing");
+  });
 });
 
 describe("store submission planner", () => {
@@ -106,6 +118,22 @@ describe("store submission planner", () => {
 
   it("plans review submission when required store metadata is present", () => {
     expect(planStoreSubmission({ manifest: manifestWithStore(), channelId: "mac-app-store" })).toEqual({
+      ok: true,
+      actions: [
+        { type: "ensure-app-store-version", version: "1.0", platform: "MAC_OS" },
+        { type: "ensure-localization", locale: "en-US" },
+        { type: "associate-processed-build" },
+        { type: "create-review-submission" }
+      ],
+      blockers: []
+    });
+  });
+
+  it("accepts app previews as store asset proof and defaults locale", () => {
+    const manifest = manifestWithStore({ screenshots: undefined, appPreviews: ["store-assets/mac/preview.mov"] });
+    manifest.app.primaryLocale = undefined;
+
+    expect(planStoreSubmission({ manifest, channelId: "mac-app-store" })).toEqual({
       ok: true,
       actions: [
         { type: "ensure-app-store-version", version: "1.0", platform: "MAC_OS" },
