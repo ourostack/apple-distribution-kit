@@ -146,12 +146,12 @@ describe("CLI scaffold", () => {
     expect(stdout.join("")).toBe("Manifest valid: distribution/apple-distribution.json\n");
   });
 
-  it("returns text not-implemented errors for asc smoke", async () => {
+  it("returns text errors for asc smoke with a missing explicit config", async () => {
     const stderr: string[] = [];
     const cli = createCli({ stdout: () => undefined, stderr: (chunk) => stderr.push(chunk) });
 
-    await expect(cli(["asc", "smoke"])).resolves.toBe(70);
-    expect(stderr.join("")).toBe("asc smoke is not implemented yet\n");
+    await expect(cli(["asc", "smoke", "--config", "/tmp/does-not-exist-adk.json"])).resolves.toBe(69);
+    expect(stderr.join("")).toContain("no such file or directory");
   });
 });
 

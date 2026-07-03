@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { discoverConfigPath } from "./config.js";
 import { loadManifest } from "./manifest.js";
+import { smokeAppStoreConnect } from "./asc.js";
 
 export interface CliIo {
   stdout: (chunk: string) => void;
@@ -49,7 +51,7 @@ export function createCli(io: CliIo): Cli {
       return validateManifestCommand(io, json, args);
     }
     if (command === "asc" && subcommand === "smoke") {
-      return notImplemented(io, json, "asc_smoke_not_implemented", "asc smoke is not implemented yet");
+      return ascSmokeCommand(io, json, args);
     }
 
     return fail(io, json, 64, {
@@ -57,6 +59,24 @@ export function createCli(io: CliIo): Cli {
       message: `Unknown command: ${command}`
     });
   };
+}
+
+async function ascSmokeCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
+  const configPath = optionValue(args, "--config") ?? discoverConfigPath({ env: process.env });
+  try {
+    const result = await smokeAppStoreConnect({ configPath });
+    if (json) {
+      io.stdout(`${JSON.stringify({ ok: true, result }, null, 2)}\n`);
+    } else {
+      io.stdout("App Store Connect API smoke passed\n");
+    }
+    return 0;
+  } catch (error) {
+    return fail(io, json, 69, {
+      code: "asc_smoke_failed",
+      message: (error as Error).message
+    });
+  }
 }
 
 async function validateManifestCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
