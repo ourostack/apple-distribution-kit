@@ -10,6 +10,7 @@ export {
 export { discoverConfigPath, loadConfig } from "./config.js";
 export { loadManifest, validateManifestObject } from "./manifest.js";
 export { createPlan, createRequiresHuman } from "./plan.js";
+export { reconcileAppleState } from "./reconcile.js";
 export { redactSecrets } from "./redaction.js";
 export { resolveManifestPath } from "./manifest-path.js";
 export type { Cli, CliIo } from "./cli-core.js";
@@ -26,4 +27,5 @@ export type {
   ValidationError
 } from "./manifest.js";
 export type { DistributionPlan, PlanAction, PlanMode, RequiresHuman, RequiresHumanInput } from "./plan.js";
+export type { CertificateType, ReconcileAction, ReconcileBlocker, ReconcileInput, ReconcileResult, RemoteAppleState } from "./reconcile.js";
 export type { ManifestPathOptions } from "./manifest-path.js";
