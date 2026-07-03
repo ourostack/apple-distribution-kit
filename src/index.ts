@@ -12,6 +12,7 @@ export { loadManifest, validateManifestObject } from "./manifest.js";
 export { createPlan, createRequiresHuman } from "./plan.js";
 export { reconcileAppleState } from "./reconcile.js";
 export { redactSecrets } from "./redaction.js";
+export { buildStoreRequests, planStoreSubmission } from "./store.js";
 export { buildXcodeCommand, parseXcodeResult, runXcodeCommand, XcodeRunnerError } from "./xcode-runner.js";
 export { resolveManifestPath } from "./manifest-path.js";
 export type { Cli, CliIo } from "./cli-core.js";
@@ -29,5 +30,6 @@ export type {
 } from "./manifest.js";
 export type { DistributionPlan, PlanAction, PlanMode, RequiresHuman, RequiresHumanInput } from "./plan.js";
 export type { CertificateType, ReconcileAction, ReconcileBlocker, ReconcileInput, ReconcileResult, RemoteAppleState } from "./reconcile.js";
+export type { StoreRequest, StoreRequestInput, StorePlanAction, StoreSubmissionPlan } from "./store.js";
 export type { RawCommandResult, RunMode, XcodeCommand, XcodeCommandInput, XcodeCommandKind, XcodeRunResult } from "./xcode-runner.js";
 export type { ManifestPathOptions } from "./manifest-path.js";
