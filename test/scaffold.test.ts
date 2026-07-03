@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -29,6 +29,8 @@ describe("CLI scaffold", () => {
     expect(stderr).toEqual([]);
     expect(stdout.join("")).toContain("apple-distribution-kit");
     expect(stdout.join("")).toContain("manifest");
+    expect(stdout.join("")).toContain("plan");
+    expect(stdout.join("")).toContain("store review-plan");
     expect(stdout.join("")).toContain("asc smoke");
   });
 
@@ -146,6 +148,121 @@ describe("CLI scaffold", () => {
     expect(stdout.join("")).toBe("Manifest valid: distribution/apple-distribution.json\n");
   });
 
+  it("prints a dry-run distribution plan as JSON", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    await writeFile(manifestPath, JSON.stringify(minimalManifest()));
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli(["--json", "plan", "--manifest", manifestPath])).resolves.toBe(0);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: true,
+      mode: "dry-run",
+      app: {
+        name: "Example",
+        bundleId: "bot.example"
+      },
+      actions: [
+        {
+          type: "validate-channel",
+          channelId: "direct",
+          distribution: "developer-id"
+        }
+      ],
+      requiresHuman: []
+    });
+  });
+
+  it("prints an apply distribution plan as text", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    await writeFile(manifestPath, JSON.stringify(minimalManifest()));
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli(["plan", "--mode", "apply", "--manifest", manifestPath])).resolves.toBe(0);
+    expect(stdout.join("")).toBe("Distribution plan: Example (1 action, mode apply)\n");
+  });
+
+  it("rejects unknown distribution plan modes", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli(["--json", "plan", "--mode", "publish"])).resolves.toBe(64);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: {
+        code: "invalid_mode",
+        message: "Unknown plan mode: publish"
+      }
+    });
+  });
+
+  it("prints store review-prep blockers and writes an artifact", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    const artifactPath = join(dir, "app-store-review-prep.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...minimalManifest(),
+        channels: [
+          {
+            id: "mac-app-store",
+            platform: "macos",
+            distribution: "app-store",
+            bundleId: "bot.example",
+            buildCommand: "build",
+            packageCommand: "package",
+            store: {
+              version: "1.0",
+              copyright: "Copyright 2026",
+              category: "PRODUCTIVITY",
+              screenshots: [],
+              privacy: { policyUrl: "https://example.com/privacy", collectsData: false },
+              exportCompliance: { usesEncryption: true, exempt: true }
+            }
+          }
+        ]
+      })
+    );
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli([
+        "--json",
+        "store",
+        "review-plan",
+        "--manifest",
+        manifestPath,
+        "--channel",
+        "mac-app-store",
+        "--artifact",
+        artifactPath
+      ])
+    ).resolves.toBe(0);
+    const output = JSON.parse(stdout.join(""));
+    expect(output.blockers).toContainEqual({
+      code: "screenshots-assets-required",
+      message: "Screenshots/app previews must exist locally or be proven present remotely before review submission.",
+      evidence: { channelId: "mac-app-store" }
+    });
+    await expect(readFile(artifactPath, "utf8").then(JSON.parse)).resolves.toEqual(output);
+  });
+
+  it("returns text errors for missing store review channel", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    await writeFile(manifestPath, JSON.stringify(minimalManifest()));
+    const stderr: string[] = [];
+    const cli = createCli({ stdout: () => undefined, stderr: (chunk) => stderr.push(chunk) });
+
+    await expect(cli(["store", "review-plan", "--manifest", manifestPath])).resolves.toBe(64);
+    expect(stderr.join("")).toBe("store review-plan requires --channel <id>\n");
+  });
+
   it("returns text errors for asc smoke with a missing explicit config", async () => {
     const stderr: string[] = [];
     const cli = createCli({ stdout: () => undefined, stderr: (chunk) => stderr.push(chunk) });
@@ -176,6 +293,24 @@ describe("CLI scaffold", () => {
     expect(stdout.join("")).toBe("App Store Connect API smoke passed\n");
   });
 });
+
+function minimalManifest() {
+  return {
+    schemaVersion: 1,
+    app: { name: "Example", bundleId: "bot.example" },
+    team: { teamId: "TEAMID" },
+    channels: [
+      {
+        id: "direct",
+        platform: "macos",
+        distribution: "developer-id",
+        bundleId: "bot.example",
+        buildCommand: "build",
+        packageCommand: "package"
+      }
+    ]
+  };
+}
 
 describe("config discovery", () => {
   it("uses an explicit config path before environment or defaults", () => {
