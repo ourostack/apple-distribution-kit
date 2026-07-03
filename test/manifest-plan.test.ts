@@ -1,0 +1,166 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  createPlan,
+  createRequiresHuman,
+  loadManifest,
+  redactSecrets,
+  validateManifestObject
+} from "../src/index.js";
+
+const tempDirs: string[] = [];
+
+async function makeTempDir() {
+  const dir = await mkdtemp(join(tmpdir(), "adk-manifest-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+function validManifest() {
+  return {
+    schemaVersion: 1,
+    app: {
+      name: "Ouro MD",
+      bundleId: "bot.ouro.md",
+      sku: "OURO-MD-MAC",
+      primaryLocale: "en-US"
+    },
+    team: {
+      teamId: "743GT2AJ24",
+      providerPublicId: "123456789"
+    },
+    channels: [
+      {
+        id: "mac-app-store",
+        platform: "macos",
+        distribution: "app-store",
+        bundleId: "bot.ouro.md",
+        buildCommand: "swift build -c release",
+        packageCommand: "scripts/package-app-store.sh --build-only",
+        store: {
+          version: "1.0",
+          copyright: "Copyright 2026",
+          category: "PRODUCTIVITY",
+          screenshots: ["store-assets/mac/01-main.png"],
+          privacy: {
+            policyUrl: "https://ouro.bot/privacy",
+            collectsData: false
+          },
+          exportCompliance: {
+            usesEncryption: true,
+            exempt: true
+          }
+        }
+      },
+      {
+        id: "direct-download",
+        platform: "macos",
+        distribution: "developer-id",
+        bundleId: "bot.ouro.md",
+        buildCommand: "swift build -c release",
+        packageCommand: "scripts/package-release.sh"
+      }
+    ]
+  };
+}
+
+describe("manifest validation", () => {
+  it("accepts the canonical manifest shape", () => {
+    expect(validateManifestObject(validManifest())).toEqual({
+      ok: true,
+      manifest: validManifest()
+    });
+  });
+
+  it("reports JSON-pointer-like validation errors", () => {
+    const manifest = validManifest();
+    manifest.channels[0]!.bundleId = "";
+
+    expect(validateManifestObject(manifest)).toEqual({
+      ok: false,
+      errors: [
+        {
+          path: "/channels/0/bundleId",
+          message: "Expected non-empty string"
+        }
+      ]
+    });
+  });
+
+  it("loads manifests from disk", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    await writeFile(manifestPath, JSON.stringify(validManifest()));
+
+    await expect(loadManifest(manifestPath)).resolves.toEqual(validManifest());
+  });
+});
+
+describe("redaction", () => {
+  it("redacts Apple secret material in nested logs", () => {
+    expect(
+      redactSecrets({
+        token: "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiIxMjMifQ.signature",
+        privateKey: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+        path: "/tmp/AuthKey_ABC123.p8",
+        password: "abcd-efgh-ijkl-mnop",
+        nested: ["safe", "AuthKey_ABC123.p8"]
+      })
+    ).toEqual({
+      token: "[REDACTED_JWT]",
+      privateKey: "[REDACTED_PRIVATE_KEY]",
+      path: "/tmp/[REDACTED_AUTH_KEY_FILE]",
+      password: "[REDACTED_SECRET]",
+      nested: ["safe", "[REDACTED_AUTH_KEY_FILE]"]
+    });
+  });
+});
+
+describe("plan shape", () => {
+  it("creates stable dry-run plans", () => {
+    expect(createPlan({ manifest: validManifest(), mode: "dry-run" })).toEqual({
+      ok: true,
+      mode: "dry-run",
+      app: {
+        name: "Ouro MD",
+        bundleId: "bot.ouro.md"
+      },
+      actions: [
+        {
+          type: "validate-channel",
+          channelId: "mac-app-store",
+          distribution: "app-store"
+        },
+        {
+          type: "validate-channel",
+          channelId: "direct-download",
+          distribution: "developer-id"
+        }
+      ],
+      requiresHuman: []
+    });
+  });
+
+  it("standardizes requiresHuman entries", () => {
+    expect(
+      createRequiresHuman({
+        code: "first-app-record-required",
+        message: "Create the first app record in App Store Connect.",
+        url: "https://appstoreconnect.apple.com/apps",
+        evidence: { bundleId: "bot.ouro.md" }
+      })
+    ).toEqual({
+      type: "requiresHuman",
+      code: "first-app-record-required",
+      message: "Create the first app record in App Store Connect.",
+      url: "https://appstoreconnect.apple.com/apps",
+      evidence: { bundleId: "bot.ouro.md" }
+    });
+  });
+});
