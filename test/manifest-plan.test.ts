@@ -93,6 +93,42 @@ describe("manifest validation", () => {
     });
   });
 
+  it.each([
+    [
+      {
+        ...validManifest(),
+        channels: [
+          { ...validManifest().channels[0], id: "duplicate" },
+          { ...validManifest().channels[1], id: "duplicate" }
+        ]
+      },
+      "/channels/1/id",
+      "Duplicate channel id: duplicate"
+    ],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[0], store: undefined }] },
+      "/channels/0/store",
+      "App Store channels require store metadata"
+    ],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[1], platform: "ios" }] },
+      "/channels/0/platform",
+      "Developer ID channels are only supported for macOS"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [{ ...validManifest().channels[0], platform: "macos", distribution: "testflight" }]
+      },
+      "/channels/0/platform",
+      "TestFlight channels are only supported for iOS"
+    ]
+  ])("rejects semantic channel mismatch %#", (manifest, path, message) => {
+    const result = validateManifestObject(manifest);
+    expect(result.ok).toBe(false);
+    expect(result.ok ? [] : result.errors).toContainEqual({ path, message });
+  });
+
   it("loads manifests from disk", async () => {
     const dir = await makeTempDir();
     const manifestPath = join(dir, "apple-distribution.json");
@@ -243,13 +279,103 @@ describe("plan shape", () => {
           distribution: "app-store"
         },
         {
+          type: "build-channel",
+          channelId: "mac-app-store",
+          distribution: "app-store",
+          command: "swift build -c release"
+        },
+        {
+          type: "package-channel",
+          channelId: "mac-app-store",
+          distribution: "app-store",
+          command: "scripts/package-app-store.sh --build-only"
+        },
+        {
+          type: "validate-app-store-package",
+          channelId: "mac-app-store",
+          distribution: "app-store"
+        },
+        {
+          type: "upload-app-store-package",
+          channelId: "mac-app-store",
+          distribution: "app-store"
+        },
+        {
+          type: "prepare-app-review",
+          channelId: "mac-app-store",
+          distribution: "app-store"
+        },
+        {
           type: "validate-channel",
+          channelId: "direct-download",
+          distribution: "developer-id"
+        },
+        {
+          type: "build-channel",
+          channelId: "direct-download",
+          distribution: "developer-id",
+          command: "swift build -c release"
+        },
+        {
+          type: "package-channel",
+          channelId: "direct-download",
+          distribution: "developer-id",
+          command: "scripts/package-release.sh"
+        },
+        {
+          type: "sign-notarize-direct-download",
+          channelId: "direct-download",
+          distribution: "developer-id"
+        },
+        {
+          type: "publish-direct-download",
           channelId: "direct-download",
           distribution: "developer-id"
         }
       ],
       requiresHuman: []
     });
+  });
+
+  it("includes TestFlight upload actions for iOS channels", () => {
+    const manifest = {
+      ...validManifest(),
+      channels: [
+        {
+          id: "ios-testflight",
+          platform: "ios",
+          distribution: "testflight",
+          bundleId: "bot.ouro.md",
+          buildCommand: "xcodebuild archive",
+          packageCommand: "xcodebuild -exportArchive"
+        }
+      ]
+    } as const;
+
+    expect(createPlan({ manifest, mode: "dry-run" }).actions).toEqual([
+      {
+        type: "validate-channel",
+        channelId: "ios-testflight",
+        distribution: "testflight"
+      },
+      {
+        type: "build-channel",
+        channelId: "ios-testflight",
+        distribution: "testflight",
+        command: "xcodebuild archive"
+      },
+      {
+        type: "package-channel",
+        channelId: "ios-testflight",
+        distribution: "testflight",
+        command: "xcodebuild -exportArchive"
+      },
+      {
+        type: "upload-testflight-build",
+        channelId: "ios-testflight",
+        distribution: "testflight"
+      }
+    ]);
   });
 
   it("standardizes requiresHuman entries", () => {

@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 export type XcodeCommandKind =
   | "codesign"
   | "productbuild"
@@ -20,8 +22,12 @@ export type XcodeCommandInput =
   | { kind: "stapler"; path: string }
   | { kind: "stapler-validate"; path: string }
   | { kind: "spctl"; path: string }
-  | { kind: "altool-validate"; packagePath: string; apiKey: string; apiIssuer: string; providerPublicId: string }
-  | { kind: "altool-upload"; packagePath: string; apiKey: string; apiIssuer: string; providerPublicId: string };
+  | ({ kind: "altool-validate"; packagePath: string } & AltoolAuthInput)
+  | ({ kind: "altool-upload"; packagePath: string } & AltoolAuthInput);
+
+export type AltoolAuthInput =
+  | { apiKey: string; apiIssuer: string; p8FilePath?: string; providerPublicId?: string }
+  | { username: string; password: string; providerPublicId?: string };
 
 export interface RawCommandResult {
   exitCode: number;
@@ -33,7 +39,8 @@ export type RunMode = "dry-run" | "apply";
 
 export type XcodeRunResult =
   | { ok: true; mode: "dry-run"; command: string[] }
-  | ({ ok: true; mode: "apply"; command: string[] } & RawCommandResult);
+  | ({ ok: true; mode: "apply"; command: string[] } & RawCommandResult)
+  | ({ ok: false; mode: "apply"; command: string[] } & RawCommandResult);
 
 export class XcodeRunnerError extends Error {
   readonly code: string;
@@ -53,8 +60,10 @@ export function buildXcodeCommand(input: XcodeCommandInput): XcodeCommand {
         argv: [
           "codesign",
           "--force",
+          "--deep",
           "--options",
           "runtime",
+          "--timestamp",
           "--entitlements",
           input.entitlements,
           "--sign",
@@ -101,12 +110,9 @@ export function buildXcodeCommand(input: XcodeCommandInput): XcodeCommand {
           input.packagePath,
           "--type",
           "macos",
-          "--api-key",
-          input.apiKey,
-          "--api-issuer",
-          input.apiIssuer,
-          "--asc-provider",
-          input.providerPublicId
+          ...buildAltoolAuthArgs(input),
+          "--output-format",
+          "json"
         ]
       };
     case "altool-upload":
@@ -119,12 +125,9 @@ export function buildXcodeCommand(input: XcodeCommandInput): XcodeCommand {
           input.packagePath,
           "--type",
           "macos",
-          "--api-key",
-          input.apiKey,
-          "--api-issuer",
-          input.apiIssuer,
-          "--asc-provider",
-          input.providerPublicId,
+          ...buildAltoolAuthArgs(input),
+          "--output-format",
+          "json",
           "--wait"
         ]
       };
@@ -141,7 +144,7 @@ export async function runXcodeCommand(input: {
   }
   const execute = input.execute ?? missingExecutor;
   const result = await execute(input.command.argv);
-  return { ok: true, mode: "apply", command: input.command.argv, ...result };
+  return { ok: result.exitCode === 0, mode: "apply", command: input.command.argv, ...result };
 }
 
 export function parseXcodeResult(input: XcodeCommand & RawCommandResult):
@@ -156,6 +159,40 @@ export function parseXcodeResult(input: XcodeCommand & RawCommandResult):
   return input.exitCode === 0 ? { ok: true, status: "ok" } : { ok: false, status: "failed", message: input.stderr };
 }
 
+export async function executeRawCommand(argv: string[]): Promise<RawCommandResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(argv[0]!, argv.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8")
+      });
+    });
+  });
+}
+
 async function missingExecutor(): Promise<RawCommandResult> {
   throw new XcodeRunnerError("missing_executor", "No command executor was provided for apply mode.");
+}
+
+function buildAltoolAuthArgs(input: AltoolAuthInput): string[] {
+  const args =
+    "apiKey" in input
+      ? ["--api-key", input.apiKey, "--api-issuer", input.apiIssuer]
+      : ["--username", input.username, "--password", input.password];
+
+  if ("p8FilePath" in input && input.p8FilePath) {
+    args.push("--p8-file-path", input.p8FilePath);
+  }
+  if (input.providerPublicId) {
+    args.push("--provider-public-id", input.providerPublicId);
+  }
+  return args;
 }

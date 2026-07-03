@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildXcodeCommand,
+  executeRawCommand,
   parseXcodeResult,
   runXcodeCommand,
   XcodeRunnerError
@@ -11,7 +12,19 @@ describe("Xcode command generation", () => {
     [
       "codesign",
       { identity: "Developer ID Application: Ari", path: "Ouro MD.app", entitlements: "entitlements.plist" },
-      ["codesign", "--force", "--options", "runtime", "--entitlements", "entitlements.plist", "--sign", "Developer ID Application: Ari", "Ouro MD.app"]
+      [
+        "codesign",
+        "--force",
+        "--deep",
+        "--options",
+        "runtime",
+        "--timestamp",
+        "--entitlements",
+        "entitlements.plist",
+        "--sign",
+        "Developer ID Application: Ari",
+        "Ouro MD.app"
+      ]
     ],
     [
       "productbuild",
@@ -22,8 +35,9 @@ describe("Xcode command generation", () => {
     ["stapler", { path: "Ouro MD.app" }, ["xcrun", "stapler", "staple", "Ouro MD.app"]],
     ["stapler-validate", { path: "Ouro MD.app" }, ["xcrun", "stapler", "validate", "Ouro MD.app"]],
     ["spctl", { path: "Ouro MD.app" }, ["spctl", "--assess", "--type", "execute", "Ouro MD.app"]],
-    ["altool-validate", { packagePath: "OuroMD.pkg", apiKey: "KEY", apiIssuer: "issuer", providerPublicId: "123" }, ["xcrun", "altool", "--validate-app", "-f", "OuroMD.pkg", "--type", "macos", "--api-key", "KEY", "--api-issuer", "issuer", "--asc-provider", "123"]],
-    ["altool-upload", { packagePath: "OuroMD.pkg", apiKey: "KEY", apiIssuer: "issuer", providerPublicId: "123" }, ["xcrun", "altool", "--upload-package", "OuroMD.pkg", "--type", "macos", "--api-key", "KEY", "--api-issuer", "issuer", "--asc-provider", "123", "--wait"]]
+    ["altool-validate", { packagePath: "OuroMD.pkg", apiKey: "KEY", apiIssuer: "issuer", providerPublicId: "123" }, ["xcrun", "altool", "--validate-app", "-f", "OuroMD.pkg", "--type", "macos", "--api-key", "KEY", "--api-issuer", "issuer", "--provider-public-id", "123", "--output-format", "json"]],
+    ["altool-validate", { packagePath: "OuroMD.pkg", username: "ari@example.com", password: "app-password" }, ["xcrun", "altool", "--validate-app", "-f", "OuroMD.pkg", "--type", "macos", "--username", "ari@example.com", "--password", "app-password", "--output-format", "json"]],
+    ["altool-upload", { packagePath: "OuroMD.pkg", apiKey: "KEY", apiIssuer: "issuer", providerPublicId: "123" }, ["xcrun", "altool", "--upload-package", "OuroMD.pkg", "--type", "macos", "--api-key", "KEY", "--api-issuer", "issuer", "--provider-public-id", "123", "--output-format", "json", "--wait"]]
   ] as const)("builds %s argv", (kind, input, argv) => {
     expect(buildXcodeCommand({ kind, ...input })).toEqual({ kind, argv });
   });
@@ -50,6 +64,23 @@ describe("Xcode command generation", () => {
       exitCode: 0,
       stdout: "ran xcrun stapler validate Ouro MD.app",
       stderr: ""
+    });
+  });
+
+  it("reports failed apply commands as not ok", async () => {
+    await expect(
+      runXcodeCommand({
+        command: buildXcodeCommand({ kind: "spctl", path: "Ouro MD.app" }),
+        mode: "apply",
+        execute: async (argv) => ({ exitCode: 1, stdout: "", stderr: `failed ${argv.join(" ")}` })
+      })
+    ).resolves.toEqual({
+      ok: false,
+      mode: "apply",
+      command: ["spctl", "--assess", "--type", "execute", "Ouro MD.app"],
+      exitCode: 1,
+      stdout: "",
+      stderr: "failed spctl --assess --type execute Ouro MD.app"
     });
   });
 });
@@ -100,6 +131,28 @@ describe("Xcode result parsing", () => {
       ok: false,
       status: "failed",
       message: "rejected"
+    });
+  });
+
+  it("executes raw commands and captures stdout, stderr, and exit code", async () => {
+    await expect(
+      executeRawCommand([
+        process.execPath,
+        "-e",
+        "process.stdout.write('out'); process.stderr.write('err'); process.exit(5)"
+      ])
+    ).resolves.toEqual({
+      exitCode: 5,
+      stdout: "out",
+      stderr: "err"
+    });
+  });
+
+  it("normalizes signal-terminated raw commands to exit code 1", async () => {
+    await expect(executeRawCommand([process.execPath, "-e", "process.kill(process.pid, 'SIGTERM')"])).resolves.toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: ""
     });
   });
 });

@@ -109,7 +109,23 @@ function validateChannels(value: unknown, path: string, errors: ValidationError[
     errors.push({ path: pointer(path), message: "Expected non-empty array" });
     return;
   }
-  value.forEach((channel, index) => validateChannel(channel, `${path}/${index}`, errors));
+  const seenChannelIds = new Set<string>();
+  value.forEach((channel, index) => {
+    const channelPath = `${path}/${index}`;
+    validateChannel(channel, channelPath, errors);
+    if (!isRecord(channel)) {
+      return;
+    }
+
+    if (typeof channel.id === "string" && channel.id.trim() !== "") {
+      if (seenChannelIds.has(channel.id)) {
+        errors.push({ path: pointer(`${channelPath}/id`), message: `Duplicate channel id: ${channel.id}` });
+      }
+      seenChannelIds.add(channel.id);
+    }
+
+    validateChannelSemantics(channel, channelPath, errors);
+  });
 }
 
 function validateChannel(value: unknown, path: string, errors: ValidationError[]): void {
@@ -125,6 +141,18 @@ function validateChannel(value: unknown, path: string, errors: ValidationError[]
   expectNonEmptyString(value.packageCommand, `${path}/packageCommand`, errors);
   if (value.store !== undefined) {
     validateStore(value.store, `${path}/store`, errors);
+  }
+}
+
+function validateChannelSemantics(value: Record<string, unknown>, path: string, errors: ValidationError[]): void {
+  if (value.distribution === "app-store" && value.store === undefined) {
+    errors.push({ path: pointer(`${path}/store`), message: "App Store channels require store metadata" });
+  }
+  if (value.distribution === "developer-id" && value.platform !== "macos") {
+    errors.push({ path: pointer(`${path}/platform`), message: "Developer ID channels are only supported for macOS" });
+  }
+  if (value.distribution === "testflight" && value.platform !== "ios") {
+    errors.push({ path: pointer(`${path}/platform`), message: "TestFlight channels are only supported for iOS" });
   }
 }
 

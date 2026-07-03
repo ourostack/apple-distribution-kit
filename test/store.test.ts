@@ -1,5 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { buildStoreRequests, planStoreSubmission } from "../src/index.js";
+
+const tempDirs: string[] = [];
+
+async function makeTempDir() {
+  const dir = await mkdtemp(join(tmpdir(), "adk-store-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 function manifestWithStore(overrides = {}) {
   return {
@@ -29,7 +44,7 @@ function manifestWithStore(overrides = {}) {
 }
 
 describe("store request builder", () => {
-  it("builds App Store version, localization, build association, and review submission requests", () => {
+  it("builds App Store version, build association, and review-submission-record requests", () => {
     expect(
       buildStoreRequests({
         appId: "app-123",
@@ -99,7 +114,11 @@ describe("store submission planner", () => {
   it("blocks review prep when privacy or export compliance is missing", () => {
     expect(
       planStoreSubmission({
-        manifest: manifestWithStore({ privacy: undefined, exportCompliance: undefined }),
+        manifest: manifestWithStore({
+          screenshots: ["asc://screenshots/existing-main"],
+          privacy: undefined,
+          exportCompliance: undefined
+        }),
         channelId: "mac-app-store"
       }).blockers
     ).toEqual([
@@ -116,32 +135,105 @@ describe("store submission planner", () => {
     ]);
   });
 
-  it("plans review submission when required store metadata is present", () => {
-    expect(planStoreSubmission({ manifest: manifestWithStore(), channelId: "mac-app-store" })).toEqual({
-      ok: true,
-      actions: [
-        { type: "ensure-app-store-version", version: "1.0", platform: "MAC_OS" },
-        { type: "ensure-localization", locale: "en-US" },
-        { type: "associate-processed-build" },
-        { type: "create-review-submission" }
-      ],
-      blockers: []
+  it("blocks when declared screenshot/app-preview files cannot be found", () => {
+    expect(planStoreSubmission({ manifest: manifestWithStore(), channelId: "mac-app-store" }).blockers).toContainEqual({
+      code: "store-assets-not-found",
+      message: "Declared screenshots/app previews must exist locally or be represented by an explicit remote proof URI.",
+      evidence: {
+        channelId: "mac-app-store",
+        missingAssets: ["store-assets/mac/01-main.png"]
+      }
     });
   });
 
+  it("does not accept arbitrary URI schemes as remote store proof", () => {
+    expect(
+      planStoreSubmission({
+        manifest: manifestWithStore({ screenshots: ["file:///tmp/definitely-missing-ouro-md-store-shot.png"] }),
+        channelId: "mac-app-store"
+      }).blockers
+    ).toContainEqual({
+      code: "store-assets-not-found",
+      message: "Declared screenshots/app previews must exist locally or be represented by an explicit remote proof URI.",
+      evidence: {
+        channelId: "mac-app-store",
+        missingAssets: ["file:///tmp/definitely-missing-ouro-md-store-shot.png"]
+      }
+    });
+  });
+
+  it("plans only honest review-prep actions when local assets exist", async () => {
+    const assetRoot = await makeTempDir();
+    await writeFile(join(assetRoot, "01-main.png"), "fake png");
+
+    expect(
+      planStoreSubmission({
+        manifest: manifestWithStore({ screenshots: ["01-main.png"] }),
+        channelId: "mac-app-store",
+        assetRoot
+      })
+    ).toEqual({
+      ok: true,
+      actions: [
+        { type: "ensure-app-store-version", version: "1.0", platform: "MAC_OS" },
+        { type: "associate-processed-build" },
+        { type: "create-review-submission-record" }
+      ],
+      blockers: [
+        {
+          code: "localization-automation-required",
+          message: "Localization metadata/update support must run before final App Review submission.",
+          evidence: { channelId: "mac-app-store", locale: "en-US" }
+        },
+        {
+          code: "review-submission-items-required",
+          message: "Review submission items and final submit action must run after a processed build is selected.",
+          evidence: { channelId: "mac-app-store" }
+        }
+      ]
+    });
+  });
+
+  it("accepts absolute local store asset paths", async () => {
+    const assetRoot = await makeTempDir();
+    const screenshotPath = join(assetRoot, "absolute-main.png");
+    await writeFile(screenshotPath, "fake png");
+
+    expect(
+      planStoreSubmission({
+        manifest: manifestWithStore({ screenshots: [screenshotPath] }),
+        channelId: "mac-app-store"
+      }).blockers
+    ).not.toContainEqual(
+      expect.objectContaining({
+        code: "store-assets-not-found"
+      })
+    );
+  });
+
   it("accepts app previews as store asset proof and defaults locale", () => {
-    const manifest = manifestWithStore({ screenshots: undefined, appPreviews: ["store-assets/mac/preview.mov"] });
+    const manifest = manifestWithStore({ screenshots: undefined, appPreviews: ["asc://appPreviews/existing-preview"] });
     manifest.app.primaryLocale = undefined;
 
     expect(planStoreSubmission({ manifest, channelId: "mac-app-store" })).toEqual({
       ok: true,
       actions: [
         { type: "ensure-app-store-version", version: "1.0", platform: "MAC_OS" },
-        { type: "ensure-localization", locale: "en-US" },
         { type: "associate-processed-build" },
-        { type: "create-review-submission" }
+        { type: "create-review-submission-record" }
       ],
-      blockers: []
+      blockers: [
+        {
+          code: "localization-automation-required",
+          message: "Localization metadata/update support must run before final App Review submission.",
+          evidence: { channelId: "mac-app-store", locale: "en-US" }
+        },
+        {
+          code: "review-submission-items-required",
+          message: "Review submission items and final submit action must run after a processed build is selected.",
+          evidence: { channelId: "mac-app-store" }
+        }
+      ]
     });
   });
 });
