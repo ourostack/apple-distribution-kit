@@ -81,4 +81,25 @@ describe("Xcode result parsing", () => {
       })
     ).rejects.toMatchObject({ code: "missing_tool", message: "spctl not found" });
   });
+
+  it("throws typed errors when apply mode lacks an executor", async () => {
+    await expect(
+      runXcodeCommand({
+        command: buildXcodeCommand({ kind: "spctl", path: "Ouro MD.app" }),
+        mode: "apply"
+      })
+    ).rejects.toMatchObject({ code: "missing_executor" });
+  });
+
+  it("classifies generic command success and failure", () => {
+    expect(parseXcodeResult({ kind: "spctl", exitCode: 0, stdout: "", stderr: "" })).toEqual({
+      ok: true,
+      status: "ok"
+    });
+    expect(parseXcodeResult({ kind: "spctl", exitCode: 1, stdout: "", stderr: "rejected" })).toEqual({
+      ok: false,
+      status: "failed",
+      message: "rejected"
+    });
+  });
 });
