@@ -199,6 +199,57 @@ describe("CLI scaffold", () => {
     });
   });
 
+  it("returns structured errors for invalid distribution plans", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli(["--json", "plan", "--manifest", "/tmp/does-not-exist-adk.json"])).resolves.toBe(65);
+    expect(JSON.parse(stdout.join("")).error.code).toBe("plan_failed");
+  });
+
+  it("uses the default manifest path for plan and store review-plan commands", async () => {
+    const dir = await makeTempDir();
+    const manifestDir = join(dir, "distribution");
+    await import("node:fs/promises").then(async ({ mkdir }) => mkdir(manifestDir));
+    await writeFile(
+      join(manifestDir, "apple-distribution.json"),
+      JSON.stringify({
+        ...minimalManifest(),
+        channels: [
+          {
+            id: "mac-app-store",
+            platform: "macos",
+            distribution: "app-store",
+            bundleId: "bot.example",
+            buildCommand: "build",
+            packageCommand: "package",
+            store: {
+              version: "1.0",
+              copyright: "Copyright 2026",
+              category: "PRODUCTIVITY",
+              screenshots: ["store-assets/mac/01-main.png"],
+              privacy: { policyUrl: "https://example.com/privacy", collectsData: false },
+              exportCompliance: { usesEncryption: true, exempt: true }
+            }
+          }
+        ]
+      })
+    );
+    const originalCwd = process.cwd();
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    try {
+      process.chdir(dir);
+      await expect(cli(["plan"])).resolves.toBe(0);
+      await expect(cli(["store", "review-plan", "--channel", "mac-app-store"])).resolves.toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+    expect(stdout.join("")).toContain("Distribution plan: Example");
+    expect(stdout.join("")).toContain("Store review plan: 4 actions, 0 blockers");
+  });
+
   it("prints store review-prep blockers and writes an artifact", async () => {
     const dir = await makeTempDir();
     const manifestPath = join(dir, "apple-distribution.json");
@@ -250,6 +301,59 @@ describe("CLI scaffold", () => {
       evidence: { channelId: "mac-app-store" }
     });
     await expect(readFile(artifactPath, "utf8").then(JSON.parse)).resolves.toEqual(output);
+  });
+
+  it("prints store review-prep text without an artifact", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...minimalManifest(),
+        channels: [
+          {
+            id: "mac-app-store",
+            platform: "macos",
+            distribution: "app-store",
+            bundleId: "bot.example",
+            buildCommand: "build",
+            packageCommand: "package",
+            store: {
+              version: "1.0",
+              copyright: "Copyright 2026",
+              category: "PRODUCTIVITY",
+              screenshots: ["store-assets/mac/01-main.png"],
+              privacy: { policyUrl: "https://example.com/privacy", collectsData: false },
+              exportCompliance: { usesEncryption: true, exempt: true }
+            }
+          }
+        ]
+      })
+    );
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli(["store", "review-plan", "--manifest", manifestPath, "--channel", "mac-app-store"])).resolves.toBe(0);
+    expect(stdout.join("")).toBe("Store review plan: 4 actions, 0 blockers\n");
+  });
+
+  it("returns structured store review-plan errors", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    await writeFile(manifestPath, JSON.stringify(minimalManifest()));
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli(["--json", "store", "review-plan", "--manifest", manifestPath, "--channel", "missing"])
+    ).resolves.toBe(65);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: {
+        code: "store_review_plan_failed",
+        message: "App Store channel not found or incomplete: missing"
+      }
+    });
   });
 
   it("returns text errors for missing store review channel", async () => {
