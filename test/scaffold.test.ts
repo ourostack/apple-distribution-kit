@@ -83,6 +83,69 @@ describe("CLI scaffold", () => {
     expect(JSON.parse(stdout.join("")).error.code).toBe("manifest_invalid");
   });
 
+  it("validates explicit manifest paths as JSON", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        app: { name: "Example", bundleId: "bot.example" },
+        team: { teamId: "TEAMID" },
+        channels: [
+          {
+            id: "direct",
+            platform: "macos",
+            distribution: "developer-id",
+            bundleId: "bot.example",
+            buildCommand: "build",
+            packageCommand: "package"
+          }
+        ]
+      })
+    );
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli(["--json", "manifest", "validate", "--manifest", manifestPath])).resolves.toBe(0);
+    expect(JSON.parse(stdout.join(""))).toEqual({ ok: true, manifestPath });
+  });
+
+  it("validates default manifest paths as text", async () => {
+    const dir = await makeTempDir();
+    const manifestDir = join(dir, "distribution");
+    await import("node:fs/promises").then(async ({ mkdir }) => mkdir(manifestDir));
+    await writeFile(
+      join(manifestDir, "apple-distribution.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        app: { name: "Example", bundleId: "bot.example" },
+        team: { teamId: "TEAMID" },
+        channels: [
+          {
+            id: "direct",
+            platform: "macos",
+            distribution: "developer-id",
+            bundleId: "bot.example",
+            buildCommand: "build",
+            packageCommand: "package"
+          }
+        ]
+      })
+    );
+    const originalCwd = process.cwd();
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    try {
+      process.chdir(dir);
+      await expect(cli(["manifest", "validate"])).resolves.toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+    expect(stdout.join("")).toBe("Manifest valid: distribution/apple-distribution.json\n");
+  });
+
   it("returns text not-implemented errors for asc smoke", async () => {
     const stderr: string[] = [];
     const cli = createCli({ stdout: () => undefined, stderr: (chunk) => stderr.push(chunk) });

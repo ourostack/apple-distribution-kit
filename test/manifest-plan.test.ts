@@ -100,6 +100,105 @@ describe("manifest validation", () => {
 
     await expect(loadManifest(manifestPath)).resolves.toEqual(validManifest());
   });
+
+  it("rejects invalid manifests loaded from disk", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    await writeFile(manifestPath, JSON.stringify({}));
+
+    await expect(loadManifest(manifestPath)).rejects.toThrow("Invalid Apple distribution manifest");
+  });
+
+  it.each([
+    [null, "/", "Expected object"],
+    [{ ...validManifest(), schemaVersion: 2 }, "/schemaVersion", "Expected 1"],
+    [{ ...validManifest(), app: null }, "/app", "Expected object"],
+    [{ ...validManifest(), app: { ...validManifest().app, sku: "" } }, "/app/sku", "Expected non-empty string"],
+    [
+      { ...validManifest(), app: { ...validManifest().app, primaryLocale: "" } },
+      "/app/primaryLocale",
+      "Expected non-empty string"
+    ],
+    [{ ...validManifest(), team: null }, "/team", "Expected object"],
+    [
+      { ...validManifest(), team: { ...validManifest().team, providerPublicId: "" } },
+      "/team/providerPublicId",
+      "Expected non-empty string"
+    ],
+    [{ ...validManifest(), channels: [] }, "/channels", "Expected non-empty array"],
+    [{ ...validManifest(), channels: "nope" }, "/channels", "Expected non-empty array"],
+    [{ ...validManifest(), channels: [null] }, "/channels/0", "Expected object"],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[0], platform: "watchos" }] },
+      "/channels/0/platform",
+      "Expected one of: macos, ios"
+    ],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[0], distribution: "enterprise" }] },
+      "/channels/0/distribution",
+      "Expected one of: app-store, developer-id, testflight"
+    ],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[0], store: null }] },
+      "/channels/0/store",
+      "Expected object"
+    ],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[0], store: { ...validManifest().channels[0]!.store, screenshots: "nope" } }] },
+      "/channels/0/store/screenshots",
+      "Expected array of non-empty strings"
+    ],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[0], store: { ...validManifest().channels[0]!.store, screenshots: [""] } }] },
+      "/channels/0/store/screenshots/0",
+      "Expected non-empty string"
+    ],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[0], store: { ...validManifest().channels[0]!.store, appPreviews: "nope" } }] },
+      "/channels/0/store/appPreviews",
+      "Expected array of non-empty strings"
+    ],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[0], store: { ...validManifest().channels[0]!.store, privacy: null } }] },
+      "/channels/0/store/privacy",
+      "Expected object"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            store: { ...validManifest().channels[0]!.store, privacy: { policyUrl: "", collectsData: "false" } }
+          }
+        ]
+      },
+      "/channels/0/store/privacy/policyUrl",
+      "Expected non-empty string"
+    ],
+    [
+      { ...validManifest(), channels: [{ ...validManifest().channels[0], store: { ...validManifest().channels[0]!.store, exportCompliance: null } }] },
+      "/channels/0/store/exportCompliance",
+      "Expected object"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            store: { ...validManifest().channels[0]!.store, exportCompliance: { usesEncryption: "yes", exempt: "yes" } }
+          }
+        ]
+      },
+      "/channels/0/store/exportCompliance/usesEncryption",
+      "Expected boolean"
+    ]
+  ])("reports validation error for %#", (manifest, path, message) => {
+    const result = validateManifestObject(manifest);
+    expect(result.ok).toBe(false);
+    expect(result.ok ? [] : result.errors).toContainEqual({ path, message });
+  });
 });
 
 describe("redaction", () => {
@@ -119,6 +218,12 @@ describe("redaction", () => {
       password: "[REDACTED_SECRET]",
       nested: ["safe", "[REDACTED_AUTH_KEY_FILE]"]
     });
+  });
+
+  it("returns primitive non-secret values unchanged", () => {
+    expect(redactSecrets(7)).toBe(7);
+    expect(redactSecrets(null)).toBeNull();
+    expect(redactSecrets("safe")).toBe("safe");
   });
 });
 

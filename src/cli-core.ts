@@ -72,7 +72,7 @@ async function validateManifestCommand(io: CliIo, json: boolean, args: string[])
   } catch (error) {
     return fail(io, json, 65, {
       code: "manifest_invalid",
-      message: error instanceof Error ? error.message : "Manifest invalid"
+      message: (error as Error).message
     });
   }
 }

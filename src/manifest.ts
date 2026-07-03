@@ -57,7 +57,8 @@ export async function loadManifest(path: string): Promise<AppleDistributionManif
   const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
   const result = validateManifestObject(parsed);
   if (!result.ok) {
-    throw new Error(`Invalid Apple distribution manifest: ${result.errors[0]?.path ?? "/"} ${result.errors[0]?.message ?? ""}`);
+    const firstError = result.errors[0]!;
+    throw new Error(`Invalid Apple distribution manifest: ${firstError.path} ${firstError.message}`);
   }
   return result.manifest;
 }
