@@ -5,8 +5,9 @@ import { discoverConfigPath } from "./config.js";
 import { loadManifest } from "./manifest.js";
 import { createPlan, type PlanMode } from "./plan.js";
 import { planStoreSubmission } from "./store.js";
-import { smokeAppStoreConnect } from "./asc.js";
+import { getAppStoreConnect, smokeAppStoreConnect } from "./asc.js";
 import { redactSecrets } from "./redaction.js";
+import { buildTestFlightRequests, planTestFlightSubmission, publishTestFlightRequests } from "./testflight.js";
 import {
   buildXcodeCommand,
   executeRawCommand,
@@ -26,12 +27,15 @@ export type Cli = (argv: string[]) => Promise<number>;
 
 export interface CliDependencies {
   smokeAppStoreConnect?: typeof smokeAppStoreConnect;
+  getAppStoreConnect?: typeof getAppStoreConnect;
   executeXcodeCommand?: (argv: string[]) => Promise<RawCommandResult>;
+  publishTestFlightRequests?: typeof publishTestFlightRequests;
 }
 
 interface CliError {
   code: string;
   message: string;
+  details?: unknown;
 }
 
 const usage = `apple-distribution-kit
@@ -42,15 +46,21 @@ Usage:
   apple-distribution-kit manifest validate [--manifest <path>] [--json]
   apple-distribution-kit plan [--manifest <path>] [--mode dry-run|apply] [--json]
   apple-distribution-kit store review-plan --channel <id> [--manifest <path>] [--artifact <path>] [--json]
+  apple-distribution-kit testflight plan --channel <id> [--manifest <path>] [--artifact <path>] [--json]
+  apple-distribution-kit testflight publish --channel <id> --app-id <id> --build-id <id> [--mode dry-run|apply] [--manifest <path>] [--config <path>] [--artifact <path>] [--group-id <name=id>] [--build-beta-detail-id <id>] [--beta-app-review-detail-id <id>] [--json]
   apple-distribution-kit xcode run --kind <kind> --mode dry-run|apply [--json] [command options]
   apple-distribution-kit asc smoke [--config <path>] [--json]
+  apple-distribution-kit asc get --path <path> [--query <name=value>] [--config <path>] [--json]
 
 Commands:
   manifest validate   Validate distribution/apple-distribution.json
   plan                Build a machine-readable distribution plan
   store review-plan   Build App Store review-prep actions/blockers
+  testflight plan     Build TestFlight publish actions/blockers
+  testflight publish  Build or apply TestFlight App Store Connect requests
   xcode run           Build or run Apple toolchain commands behind an explicit mode gate
   asc smoke           Verify App Store Connect API credentials without printing secrets
+  asc get             GET an App Store Connect API path with authenticated, redacted output
 `;
 
 export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
@@ -80,11 +90,20 @@ export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
     if (command === "store" && subcommand === "review-plan") {
       return storeReviewPlanCommand(io, json, args);
     }
+    if (command === "testflight" && subcommand === "plan") {
+      return testFlightPlanCommand(io, json, args);
+    }
+    if (command === "testflight" && subcommand === "publish") {
+      return testFlightPublishCommand(io, json, args, dependencies.publishTestFlightRequests ?? publishTestFlightRequests);
+    }
     if (command === "xcode" && subcommand === "run") {
       return xcodeRunCommand(io, json, args, dependencies.executeXcodeCommand ?? executeRawCommand);
     }
     if (command === "asc" && subcommand === "smoke") {
       return ascSmokeCommand(io, json, args, smoke);
+    }
+    if (command === "asc" && subcommand === "get") {
+      return ascGetCommand(io, json, args, dependencies.getAppStoreConnect ?? getAppStoreConnect);
     }
 
     return fail(io, json, 64, {
@@ -112,6 +131,39 @@ async function ascSmokeCommand(
   } catch (error) {
     return fail(io, json, 69, {
       code: "asc_smoke_failed",
+      message: (error as Error).message
+    });
+  }
+}
+
+async function ascGetCommand(
+  io: CliIo,
+  json: boolean,
+  args: string[],
+  getAsc: typeof getAppStoreConnect
+): Promise<number> {
+  const path = optionValue(args, "--path");
+  if (!path) {
+    return fail(io, json, 64, {
+      code: "missing_path",
+      message: "asc get requires --path <path>"
+    });
+  }
+  try {
+    const result = await getAsc({
+      configPath: optionValue(args, "--config") ?? discoverConfigPath({ env: process.env }),
+      path,
+      query: parseNameValueOptions(optionValues(args, "--query"), "--query")
+    });
+    if (json) {
+      io.stdout(`${JSON.stringify({ ok: true, result }, null, 2)}\n`);
+    } else {
+      io.stdout(`${JSON.stringify(result, null, 2)}\n`);
+    }
+    return 0;
+  } catch (error) {
+    return fail(io, json, 69, {
+      code: "asc_get_failed",
       message: (error as Error).message
     });
   }
@@ -176,6 +228,122 @@ async function storeReviewPlanCommand(io: CliIo, json: boolean, args: string[]):
   } catch (error) {
     return fail(io, json, 65, {
       code: "store_review_plan_failed",
+      message: (error as Error).message
+    });
+  }
+}
+
+async function testFlightPlanCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
+  const channelId = optionValue(args, "--channel");
+  if (!channelId) {
+    return fail(io, json, 64, {
+      code: "missing_channel",
+      message: "testflight plan requires --channel <id>"
+    });
+  }
+
+  const manifestPath = optionValue(args, "--manifest") ?? "distribution/apple-distribution.json";
+  try {
+    const manifest = await loadManifest(manifestPath);
+    const plan = planTestFlightSubmission({ manifest, channelId });
+    const artifactPath = optionValue(args, "--artifact");
+    const body = `${JSON.stringify(plan, null, 2)}\n`;
+    if (artifactPath) {
+      mkdirSync(dirname(artifactPath), { recursive: true });
+      writeFileSync(artifactPath, body);
+    }
+    if (json) {
+      io.stdout(body);
+    } else {
+      io.stdout(
+        `TestFlight plan: ${plan.actions.length} ${pluralize("action", plan.actions.length)}, ${plan.blockers.length} ${pluralize("blocker", plan.blockers.length)}\n`
+      );
+    }
+    return 0;
+  } catch (error) {
+    return fail(io, json, 65, {
+      code: "testflight_plan_failed",
+      message: (error as Error).message
+    });
+  }
+}
+
+async function testFlightPublishCommand(
+  io: CliIo,
+  json: boolean,
+  args: string[],
+  publish: typeof publishTestFlightRequests
+): Promise<number> {
+  const modeValue = optionValue(args, "--mode") ?? "dry-run";
+  if (!isRunMode(modeValue)) {
+    return fail(io, json, 64, {
+      code: "invalid_mode",
+      message: `Unknown TestFlight publish mode: ${modeValue}`
+    });
+  }
+  const channelId = optionValue(args, "--channel");
+  const appId = optionValue(args, "--app-id");
+  const buildId = optionValue(args, "--build-id");
+  if (!channelId || !appId || !buildId) {
+    return fail(io, json, 64, {
+      code: "missing_testflight_publish_input",
+      message: "testflight publish requires --channel, --app-id, and --build-id"
+    });
+  }
+
+  const manifestPath = optionValue(args, "--manifest") ?? "distribution/apple-distribution.json";
+  try {
+    const manifest = await loadManifest(manifestPath);
+    const plan = planTestFlightSubmission({ manifest, channelId });
+    if (plan.blockers.length > 0) {
+      return fail(io, json, 65, {
+        code: "testflight_publish_blocked",
+        message: `testflight publish blocked: ${plan.blockers.map((blocker) => blocker.code).join(", ")}`,
+        details: { blockers: plan.blockers }
+      });
+    }
+    const requests = buildTestFlightRequests({
+      manifest,
+      channelId,
+      appId,
+      buildId,
+      ...(optionValue(args, "--build-beta-detail-id")
+        ? { buildBetaDetailId: optionValue(args, "--build-beta-detail-id")! }
+        : {}),
+      ...(optionValue(args, "--beta-app-review-detail-id")
+        ? { betaAppReviewDetailId: optionValue(args, "--beta-app-review-detail-id")! }
+        : {}),
+      groupIdsByName: parseNameValueOptions(optionValues(args, "--group-id"), "--group-id")
+    });
+    const artifactPath = optionValue(args, "--artifact");
+    const dryRunBody = { ok: true, mode: modeValue, requests };
+    const redactedDryRunBody = redactSecrets(dryRunBody);
+    if (artifactPath) {
+      mkdirSync(dirname(artifactPath), { recursive: true });
+      writeFileSync(artifactPath, `${JSON.stringify(redactedDryRunBody, null, 2)}\n`);
+    }
+    if (modeValue === "dry-run") {
+      if (json) {
+        io.stdout(`${JSON.stringify(redactedDryRunBody, null, 2)}\n`);
+      } else {
+        io.stdout(`TestFlight publish dry-run: ${requests.length} ${pluralize("request", requests.length)}\n`);
+      }
+      return 0;
+    }
+
+    const result = await publish({
+      configPath: optionValue(args, "--config") ?? discoverConfigPath({ env: process.env }),
+      requests
+    });
+    if (json) {
+      io.stdout(`${JSON.stringify(redactSecrets({ ok: true, mode: modeValue, requests, result }), null, 2)}\n`);
+    } else {
+      io.stdout(`TestFlight publish applied: ${requests.length} ${pluralize("request", requests.length)}\n`);
+    }
+    return 0;
+  } catch (error) {
+    return fail(io, json, 65, {
+      code: "testflight_publish_failed",
       message: (error as Error).message
     });
   }
@@ -318,6 +486,28 @@ function optionValue(args: string[], name: string): string | undefined {
   return args[index + 1];
 }
 
+function optionValues(args: string[], name: string): string[] {
+  const values: string[] = [];
+  args.forEach((value, index) => {
+    if (value === name && args[index + 1]) {
+      values.push(args[index + 1]!);
+    }
+  });
+  return values;
+}
+
+function parseNameValueOptions(values: string[], label: string): Record<string, string> {
+  const parsed: Record<string, string> = {};
+  for (const value of values) {
+    const separator = value.indexOf("=");
+    if (separator <= 0 || separator === value.length - 1) {
+      throw new Error(`Expected ${label} value to be name=id, got: ${value}`);
+    }
+    parsed[value.slice(0, separator)] = value.slice(separator + 1);
+  }
+  return parsed;
+}
+
 function takeFlag(args: string[], flag: string): boolean {
   const index = args.indexOf(flag);
   if (index === -1) {
@@ -383,6 +573,10 @@ function xcodeAltoolInput(kind: "altool-validate" | "altool-upload", args: strin
   if (!packagePath) {
     return { error: "xcode run requires --package-path for altool commands" };
   }
+  const platform = optionValue(args, "--platform");
+  if (platform && !["macos", "ios", "appletvos", "visionos"].includes(platform)) {
+    return { error: "xcode run altool --platform must be macos, ios, appletvos, or visionos" };
+  }
   const providerPublicId = optionValue(args, "--provider-public-id");
   const apiKey = optionValue(args, "--api-key");
   const apiIssuer = optionValue(args, "--api-issuer");
@@ -395,6 +589,7 @@ function xcodeAltoolInput(kind: "altool-validate" | "altool-upload", args: strin
       packagePath,
       apiKey,
       apiIssuer,
+      ...(platform ? { platform: platform as "macos" | "ios" | "appletvos" | "visionos" } : {}),
       ...(optionValue(args, "--p8-file-path") ? { p8FilePath: optionValue(args, "--p8-file-path")! } : {}),
       ...(providerPublicId ? { providerPublicId } : {})
     } as XcodeCommandInput;
@@ -410,6 +605,7 @@ function xcodeAltoolInput(kind: "altool-validate" | "altool-upload", args: strin
     packagePath,
     username,
     password,
+    ...(platform ? { platform: platform as "macos" | "ios" | "appletvos" | "visionos" } : {}),
     ...(providerPublicId ? { providerPublicId } : {})
   } as XcodeCommandInput;
 }

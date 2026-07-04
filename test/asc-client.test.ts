@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   AppStoreConnectError,
   createAppStoreConnectClient,
+  getAppStoreConnect,
   loadAscAuth,
   resolveProviderPublicId,
   signAppStoreConnectJwt,
@@ -114,6 +115,37 @@ describe("App Store Connect client", () => {
       Accept: "application/json"
     });
     expect(String((calls[0]!.init.headers as Record<string, string>).Authorization)).toMatch(/^Bearer /);
+  });
+
+  it("captures outgoing JSON request shape for mutation calls", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = createAppStoreConnectClient({
+      auth: {
+        issuerId: "issuer",
+        keyId: "KEY",
+        privateKeyPem: generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "pem", type: "pkcs8" }).toString()
+      },
+      now: new Date("2026-07-03T12:00:00Z"),
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init: init ?? {} });
+        return new Response(null, { status: 204 });
+      }
+    });
+
+    await expect(
+      client.request({
+        method: "POST",
+        path: "/v1/betaBuildLocalizations",
+        body: { data: { type: "betaBuildLocalizations" } }
+      })
+    ).resolves.toEqual({ ok: true });
+    expect(calls[0]!.url).toBe("https://api.appstoreconnect.apple.com/v1/betaBuildLocalizations");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(calls[0]!.init.headers).toMatchObject({
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    });
+    expect(calls[0]!.init.body).toBe('{"data":{"type":"betaBuildLocalizations"}}');
   });
 
   it("classifies retryable and non-retryable Apple errors", async () => {
@@ -243,6 +275,32 @@ describe("App Store Connect client", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("runs authenticated GET helpers with query parameters and redaction", async () => {
+    const dir = await makeTempDir();
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const calls: string[] = [];
+    const keyPath = join(dir, "AuthKey_TEST.p8");
+    const configPath = join(dir, "config.json");
+    await writeFile(keyPath, privateKey.export({ format: "pem", type: "pkcs8" }).toString());
+    await writeFile(configPath, JSON.stringify({ issuerId: "issuer", keyId: "KEY", privateKeyPath: keyPath }));
+
+    await expect(
+      getAppStoreConnect({
+        configPath,
+        path: "/v1/builds",
+        query: { "filter[app]": "app-123", sort: "-uploadedDate" },
+        now: new Date("2026-07-04T12:00:00Z"),
+        fetch: async (url) => {
+          calls.push(String(url));
+          return new Response(JSON.stringify({ token: "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiIxMjMifQ.signature" }), { status: 200 });
+        }
+      })
+    ).resolves.toEqual({ token: "[REDACTED_JWT]" });
+    expect(calls).toEqual([
+      "https://api.appstoreconnect.apple.com/v1/builds?filter%5Bapp%5D=app-123&sort=-uploadedDate"
+    ]);
   });
 });
 
