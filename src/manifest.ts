@@ -26,6 +26,7 @@ export interface DistributionChannel {
   buildCommand: string;
   packageCommand: string;
   store?: StoreMetadata;
+  testflight?: TestFlightMetadata;
 }
 
 export interface StoreMetadata {
@@ -42,6 +43,41 @@ export interface StoreMetadata {
     usesEncryption: boolean;
     exempt: boolean;
   };
+}
+
+export interface TestFlightMetadata {
+  groups: TestFlightGroup[];
+  build?: {
+    whatsNew?: string;
+    autoNotifyEnabled?: boolean;
+    notifyTesters?: boolean;
+  };
+  betaApp?: {
+    description?: string;
+    feedbackEmail?: string;
+    marketingUrl?: string;
+    privacyPolicyUrl?: string;
+  };
+  betaReview?: {
+    contactFirstName?: string;
+    contactLastName?: string;
+    contactPhone?: string;
+    contactEmail?: string;
+    demoAccountRequired?: boolean;
+    demoAccountName?: string;
+    demoAccountPassword?: string;
+    notes?: string;
+  };
+}
+
+export interface TestFlightGroup {
+  name: string;
+  type?: "internal" | "external";
+  hasAccessToAllBuilds?: boolean;
+  publicLinkEnabled?: boolean;
+  publicLinkLimitEnabled?: boolean;
+  publicLinkLimit?: number;
+  feedbackEnabled?: boolean;
 }
 
 export interface ValidationError {
@@ -142,6 +178,9 @@ function validateChannel(value: unknown, path: string, errors: ValidationError[]
   if (value.store !== undefined) {
     validateStore(value.store, `${path}/store`, errors);
   }
+  if (value.testflight !== undefined) {
+    validateTestFlight(value.testflight, `${path}/testflight`, errors);
+  }
 }
 
 function validateChannelSemantics(value: Record<string, unknown>, path: string, errors: ValidationError[]): void {
@@ -153,6 +192,9 @@ function validateChannelSemantics(value: Record<string, unknown>, path: string, 
   }
   if (value.distribution === "testflight" && value.platform !== "ios") {
     errors.push({ path: pointer(`${path}/platform`), message: "TestFlight channels are only supported for iOS" });
+  }
+  if (value.distribution === "testflight" && value.testflight === undefined) {
+    errors.push({ path: pointer(`${path}/testflight`), message: "TestFlight channels require testflight metadata" });
   }
 }
 
@@ -192,6 +234,94 @@ function validateExportCompliance(value: unknown, path: string, errors: Validati
   expectBoolean(value.exempt, `${path}/exempt`, errors);
 }
 
+function validateTestFlight(value: unknown, path: string, errors: ValidationError[]): void {
+  if (!isRecord(value)) {
+    errors.push({ path: pointer(path), message: "Expected object" });
+    return;
+  }
+  validateTestFlightGroups(value.groups, `${path}/groups`, errors);
+  if (value.build !== undefined) {
+    validateTestFlightBuild(value.build, `${path}/build`, errors);
+  }
+  if (value.betaApp !== undefined) {
+    validateTestFlightStringBag(value.betaApp, `${path}/betaApp`, errors, [
+      "description",
+      "feedbackEmail",
+      "marketingUrl",
+      "privacyPolicyUrl"
+    ]);
+  }
+  if (value.betaReview !== undefined) {
+    validateTestFlightBetaReview(value.betaReview, `${path}/betaReview`, errors);
+  }
+}
+
+function validateTestFlightGroups(value: unknown, path: string, errors: ValidationError[]): void {
+  if (!Array.isArray(value) || value.length === 0) {
+    errors.push({ path: pointer(path), message: "Expected non-empty array" });
+    return;
+  }
+  const seenNames = new Set<string>();
+  value.forEach((group, index) => {
+    const groupPath = `${path}/${index}`;
+    if (!isRecord(group)) {
+      errors.push({ path: pointer(groupPath), message: "Expected object" });
+      return;
+    }
+    expectNonEmptyString(group.name, `${groupPath}/name`, errors);
+    if (typeof group.name === "string" && group.name.trim() !== "") {
+      if (seenNames.has(group.name)) {
+        errors.push({ path: pointer(`${groupPath}/name`), message: `Duplicate TestFlight group name: ${group.name}` });
+      }
+      seenNames.add(group.name);
+    }
+    expectOptionalEnum(group.type, `${groupPath}/type`, ["internal", "external"], errors);
+    expectOptionalBoolean(group.hasAccessToAllBuilds, `${groupPath}/hasAccessToAllBuilds`, errors);
+    expectOptionalBoolean(group.publicLinkEnabled, `${groupPath}/publicLinkEnabled`, errors);
+    expectOptionalBoolean(group.publicLinkLimitEnabled, `${groupPath}/publicLinkLimitEnabled`, errors);
+    expectOptionalIntegerRange(group.publicLinkLimit, `${groupPath}/publicLinkLimit`, 1, 10_000, errors);
+    expectOptionalBoolean(group.feedbackEnabled, `${groupPath}/feedbackEnabled`, errors);
+  });
+}
+
+function validateTestFlightBuild(value: unknown, path: string, errors: ValidationError[]): void {
+  if (!isRecord(value)) {
+    errors.push({ path: pointer(path), message: "Expected object" });
+    return;
+  }
+  expectOptionalNonEmptyString(value.whatsNew, `${path}/whatsNew`, errors);
+  expectOptionalBoolean(value.autoNotifyEnabled, `${path}/autoNotifyEnabled`, errors);
+  expectOptionalBoolean(value.notifyTesters, `${path}/notifyTesters`, errors);
+}
+
+function validateTestFlightStringBag(
+  value: unknown,
+  path: string,
+  errors: ValidationError[],
+  keys: string[]
+): void {
+  if (!isRecord(value)) {
+    errors.push({ path: pointer(path), message: "Expected object" });
+    return;
+  }
+  keys.forEach((key) => expectOptionalNonEmptyString(value[key], `${path}/${key}`, errors));
+}
+
+function validateTestFlightBetaReview(value: unknown, path: string, errors: ValidationError[]): void {
+  validateTestFlightStringBag(value, path, errors, [
+    "contactFirstName",
+    "contactLastName",
+    "contactPhone",
+    "contactEmail",
+    "demoAccountName",
+    "demoAccountPassword",
+    "notes"
+  ]);
+  if (isRecord(value)) {
+    expectOptionalBoolean(value.demoAccountRequired, `${path}/demoAccountRequired`, errors);
+  }
+}
+
 function expectLiteral(value: unknown, path: string, expected: unknown, errors: ValidationError[]): void {
   if (value !== expected) {
     errors.push({ path: pointer(path), message: `Expected ${String(expected)}` });
@@ -204,6 +334,12 @@ function expectEnum(value: unknown, path: string, allowed: string[], errors: Val
   }
 }
 
+function expectOptionalEnum(value: unknown, path: string, allowed: string[], errors: ValidationError[]): void {
+  if (value !== undefined) {
+    expectEnum(value, path, allowed, errors);
+  }
+}
+
 function expectNonEmptyString(value: unknown, path: string, errors: ValidationError[]): void {
   if (typeof value !== "string" || value.trim() === "") {
     errors.push({ path: pointer(path), message: "Expected non-empty string" });
@@ -213,6 +349,12 @@ function expectNonEmptyString(value: unknown, path: string, errors: ValidationEr
 function expectOptionalNonEmptyString(value: unknown, path: string, errors: ValidationError[]): void {
   if (value !== undefined) {
     expectNonEmptyString(value, path, errors);
+  }
+}
+
+function expectOptionalBoolean(value: unknown, path: string, errors: ValidationError[]): void {
+  if (value !== undefined) {
+    expectBoolean(value, path, errors);
   }
 }
 
@@ -230,6 +372,18 @@ function expectOptionalStringArray(value: unknown, path: string, errors: Validat
 function expectBoolean(value: unknown, path: string, errors: ValidationError[]): void {
   if (typeof value !== "boolean") {
     errors.push({ path: pointer(path), message: "Expected boolean" });
+  }
+}
+
+function expectOptionalIntegerRange(
+  value: unknown,
+  path: string,
+  min: number,
+  max: number,
+  errors: ValidationError[]
+): void {
+  if (value !== undefined && (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max)) {
+    errors.push({ path: pointer(path), message: `Expected integer between ${min} and ${max}` });
   }
 }
 

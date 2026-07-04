@@ -10,6 +10,8 @@ export type XcodeCommandKind =
   | "altool-validate"
   | "altool-upload";
 
+export type AltoolPlatform = "macos" | "ios" | "appletvos" | "visionos";
+
 export interface XcodeCommand {
   kind: XcodeCommandKind;
   argv: string[];
@@ -26,8 +28,8 @@ export type XcodeCommandInput =
   | ({ kind: "altool-upload"; packagePath: string } & AltoolAuthInput);
 
 export type AltoolAuthInput =
-  | { apiKey: string; apiIssuer: string; p8FilePath?: string; providerPublicId?: string }
-  | { username: string; password: string; providerPublicId?: string };
+  | { apiKey: string; apiIssuer: string; p8FilePath?: string; providerPublicId?: string; platform?: AltoolPlatform }
+  | { username: string; password: string; providerPublicId?: string; platform?: AltoolPlatform };
 
 export interface RawCommandResult {
   exitCode: number;
@@ -108,8 +110,7 @@ export function buildXcodeCommand(input: XcodeCommandInput): XcodeCommand {
           "--validate-app",
           "-f",
           input.packagePath,
-          "--type",
-          "macos",
+          ...buildAltoolPlatformArgs(input),
           ...buildAltoolAuthArgs(input),
           "--output-format",
           "json"
@@ -123,8 +124,7 @@ export function buildXcodeCommand(input: XcodeCommandInput): XcodeCommand {
           "altool",
           "--upload-package",
           input.packagePath,
-          "--type",
-          "macos",
+          ...buildAltoolPlatformArgs(input),
           ...buildAltoolAuthArgs(input),
           "--output-format",
           "json",
@@ -180,6 +180,11 @@ export async function executeRawCommand(argv: string[]): Promise<RawCommandResul
 
 async function missingExecutor(): Promise<RawCommandResult> {
   throw new XcodeRunnerError("missing_executor", "No command executor was provided for apply mode.");
+}
+
+function buildAltoolPlatformArgs(input: AltoolAuthInput): string[] {
+  const platform = input.platform ?? "macos";
+  return platform === "macos" ? ["--type", "macos"] : [];
 }
 
 function buildAltoolAuthArgs(input: AltoolAuthInput): string[] {

@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { generateKeyPairSync } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -31,8 +32,11 @@ describe("CLI scaffold", () => {
     expect(stdout.join("")).toContain("manifest");
     expect(stdout.join("")).toContain("plan");
     expect(stdout.join("")).toContain("store review-plan");
+    expect(stdout.join("")).toContain("testflight plan");
+    expect(stdout.join("")).toContain("testflight publish");
     expect(stdout.join("")).toContain("xcode run");
     expect(stdout.join("")).toContain("asc smoke");
+    expect(stdout.join("")).toContain("asc get");
   });
 
   it("prints help for empty arguments", async () => {
@@ -277,6 +281,26 @@ describe("CLI scaffold", () => {
     expect(stdout.join("")).toContain("Store review plan: 3 actions, 2 blockers");
   });
 
+  it("uses the default manifest path for TestFlight commands", async () => {
+    const dir = await makeTempDir();
+    const manifestDir = join(dir, "distribution");
+    await import("node:fs/promises").then(async ({ mkdir }) => mkdir(manifestDir));
+    await writeFile(join(manifestDir, "apple-distribution.json"), JSON.stringify(testFlightManifest()));
+    const originalCwd = process.cwd();
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    try {
+      process.chdir(dir);
+      await expect(cli(["testflight", "plan", "--channel", "ios-testflight"])).resolves.toBe(0);
+      await expect(cli(["testflight", "publish", "--channel", "ios-testflight", "--app-id", "app-123", "--build-id", "build-123"])).resolves.toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+    expect(stdout.join("")).toContain("TestFlight plan: 6 actions, 0 blockers");
+    expect(stdout.join("")).toContain("TestFlight publish dry-run: 3 requests");
+  });
+
   it("prints store review-prep blockers and writes an artifact", async () => {
     const dir = await makeTempDir();
     const manifestPath = join(dir, "apple-distribution.json");
@@ -362,6 +386,392 @@ describe("CLI scaffold", () => {
 
     await expect(cli(["store", "review-plan", "--manifest", manifestPath, "--channel", "mac-app-store"])).resolves.toBe(0);
     expect(stdout.join("")).toBe("Store review plan: 0 actions, 1 blocker\n");
+  });
+
+  it("prints TestFlight plan blockers and writes an artifact", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    const artifactPath = join(dir, "testflight-plan.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...minimalManifest(),
+        team: { teamId: "TEAM" },
+        channels: [
+          {
+            id: "ios-testflight",
+            platform: "ios",
+            distribution: "testflight",
+            bundleId: "app.spoonjoy",
+            buildCommand: "build-ios",
+            packageCommand: "package-ios",
+            testflight: { groups: [{ name: "Internal", type: "internal" }], build: {} }
+          }
+        ]
+      })
+    );
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli(["--json", "testflight", "plan", "--manifest", manifestPath, "--channel", "ios-testflight", "--artifact", artifactPath])
+    ).resolves.toBe(0);
+    const output = JSON.parse(stdout.join(""));
+    expect(output.blockers).toContainEqual({
+      code: "testflight-whats-new-required",
+      message: "TestFlight builds need tester-facing what-to-test notes.",
+      evidence: { channelId: "ios-testflight", locale: "en-US" }
+    });
+    await expect(readFile(artifactPath, "utf8").then(JSON.parse)).resolves.toEqual(output);
+  });
+
+  it("prints TestFlight plan text and reports plan failures", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    const stdout: string[] = [];
+    await writeFile(manifestPath, JSON.stringify(testFlightManifest()));
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli(["testflight", "plan", "--manifest", manifestPath, "--channel", "ios-testflight"])).resolves.toBe(0);
+    expect(stdout.join("")).toBe("TestFlight plan: 6 actions, 0 blockers\n");
+
+    stdout.splice(0);
+    await expect(cli(["--json", "testflight", "plan", "--manifest", manifestPath, "--channel", "missing"])).resolves.toBe(65);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: {
+        code: "testflight_plan_failed",
+        message: "TestFlight channel not found or incomplete: missing"
+      }
+    });
+
+    stdout.splice(0);
+    await expect(cli(["--json", "testflight", "plan", "--manifest", manifestPath])).resolves.toBe(64);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: {
+        code: "missing_channel",
+        message: "testflight plan requires --channel <id>"
+      }
+    });
+  });
+
+  it("dry-runs TestFlight publish requests as JSON", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    await writeFile(manifestPath, JSON.stringify(testFlightManifest()));
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli([
+        "--json",
+        "testflight",
+        "publish",
+        "--manifest",
+        manifestPath,
+        "--channel",
+        "ios-testflight",
+        "--app-id",
+        "app-123",
+        "--build-id",
+        "build-123",
+        "--build-beta-detail-id",
+        "detail-123",
+        "--beta-app-review-detail-id",
+        "review-detail-123",
+        "--group-id",
+        "Internal=group-1"
+      ])
+    ).resolves.toBe(0);
+    const output = JSON.parse(stdout.join(""));
+    expect(output.ok).toBe(true);
+    expect(output.mode).toBe("dry-run");
+    expect(output.requests).toContainEqual({
+      method: "POST",
+      path: "/v1/betaGroups/group-1/relationships/builds",
+      body: { data: [{ type: "builds", id: "build-123" }] }
+    });
+  });
+
+  it("dry-runs TestFlight publish requests as text and writes an artifact", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    const artifactPath = join(dir, "testflight-publish.json");
+    const stdout: string[] = [];
+    await writeFile(manifestPath, JSON.stringify(testFlightManifest()));
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli([
+        "testflight",
+        "publish",
+        "--manifest",
+        manifestPath,
+        "--channel",
+        "ios-testflight",
+        "--app-id",
+        "app-123",
+        "--build-id",
+        "build-123",
+        "--artifact",
+        artifactPath
+      ])
+    ).resolves.toBe(0);
+    expect(stdout.join("")).toBe("TestFlight publish dry-run: 3 requests\n");
+    await expect(readFile(artifactPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
+      ok: true,
+      mode: "dry-run"
+    });
+  });
+
+  it("applies TestFlight publish requests through an injected publisher", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    const calls: unknown[] = [];
+    await writeFile(manifestPath, JSON.stringify(testFlightManifest()));
+    const stdout: string[] = [];
+    const cli = createCli(
+      { stdout: (chunk) => stdout.push(chunk), stderr: () => undefined },
+      {
+        publishTestFlightRequests: async (input) => {
+          calls.push(input);
+          return { ok: true, results: [{ id: "ok" }] };
+        }
+      }
+    );
+
+    await expect(
+      cli([
+        "--json",
+        "testflight",
+        "publish",
+        "--mode",
+        "apply",
+        "--manifest",
+        manifestPath,
+        "--channel",
+        "ios-testflight",
+        "--app-id",
+        "app-123",
+        "--build-id",
+        "build-123",
+        "--config",
+        "/tmp/asc-config.json"
+      ])
+    ).resolves.toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ configPath: "/tmp/asc-config.json" });
+    expect(JSON.parse(stdout.join("")).result).toEqual({ ok: true, results: [{ id: "ok" }] });
+  });
+
+  it("prints TestFlight publish apply results as text", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    const stdout: string[] = [];
+    await writeFile(manifestPath, JSON.stringify(testFlightManifest()));
+    const cli = createCli(
+      { stdout: (chunk) => stdout.push(chunk), stderr: () => undefined },
+      { publishTestFlightRequests: async () => ({ ok: true, results: [] }) }
+    );
+
+    await expect(
+      cli([
+        "testflight",
+        "publish",
+        "--mode",
+        "apply",
+        "--manifest",
+        manifestPath,
+        "--channel",
+        "ios-testflight",
+        "--app-id",
+        "app-123",
+        "--build-id",
+        "build-123"
+      ])
+    ).resolves.toBe(0);
+    expect(stdout.join("")).toBe("TestFlight publish applied: 3 requests\n");
+  });
+
+  it("rejects malformed TestFlight group-id options", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    const stdout: string[] = [];
+    await writeFile(manifestPath, JSON.stringify(testFlightManifest()));
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli([
+        "--json",
+        "testflight",
+        "publish",
+        "--manifest",
+        manifestPath,
+        "--channel",
+        "ios-testflight",
+        "--app-id",
+        "app-123",
+        "--build-id",
+        "build-123",
+        "--group-id",
+        "missing-separator"
+      ])
+    ).resolves.toBe(65);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: {
+        code: "testflight_publish_failed",
+        message: "Expected --group-id value to be name=id, got: missing-separator"
+      }
+    });
+  });
+
+  it.each([
+    [
+      ["--json", "testflight", "publish", "--mode", "launch"],
+      {
+        code: "invalid_mode",
+        message: "Unknown TestFlight publish mode: launch"
+      }
+    ],
+    [
+      ["--json", "testflight", "publish", "--channel", "ios-testflight"],
+      {
+        code: "missing_testflight_publish_input",
+        message: "testflight publish requires --channel, --app-id, and --build-id"
+      }
+    ]
+  ])("rejects invalid TestFlight publish input %#", async (argv, error) => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(cli(argv)).resolves.toBe(64);
+    expect(JSON.parse(stdout.join(""))).toEqual({ ok: false, error });
+  });
+
+  it("rejects invalid altool platforms", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli([
+        "--json",
+        "xcode",
+        "run",
+        "--kind",
+        "altool-upload",
+        "--package-path",
+        "Spoonjoy.ipa",
+        "--platform",
+        "android",
+        "--api-key",
+        "KEY",
+        "--api-issuer",
+        "issuer"
+      ])
+    ).resolves.toBe(64);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: {
+        code: "missing_option",
+        message: "xcode run altool --platform must be macos, ios, appletvos, or visionos"
+      }
+    });
+  });
+
+  it("dry-runs altool API auth without an explicit platform", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli([
+        "--json",
+        "xcode",
+        "run",
+        "--kind",
+        "altool-upload",
+        "--package-path",
+        "OuroMD.pkg",
+        "--api-key",
+        "KEY",
+        "--api-issuer",
+        "issuer"
+      ])
+    ).resolves.toBe(0);
+    expect(JSON.parse(stdout.join("")).command).toContain("--type");
+  });
+
+  it("dry-runs altool API auth with an explicit iOS platform", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli([
+        "--json",
+        "xcode",
+        "run",
+        "--kind",
+        "altool-upload",
+        "--package-path",
+        "Spoonjoy.ipa",
+        "--platform",
+        "ios",
+        "--api-key",
+        "KEY",
+        "--api-issuer",
+        "issuer"
+      ])
+    ).resolves.toBe(0);
+    expect(JSON.parse(stdout.join("")).command).toEqual([
+      "xcrun",
+      "altool",
+      "--upload-package",
+      "Spoonjoy.ipa",
+      "--api-key",
+      "KEY",
+      "--api-issuer",
+      "issuer",
+      "--output-format",
+      "json",
+      "--wait"
+    ]);
+  });
+
+  it("dry-runs altool username auth with an explicit iOS platform", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    await expect(
+      cli([
+        "--json",
+        "xcode",
+        "run",
+        "--kind",
+        "altool-upload",
+        "--package-path",
+        "Spoonjoy.ipa",
+        "--platform",
+        "ios",
+        "--username",
+        "ari@example.com",
+        "--password",
+        "app-password"
+      ])
+    ).resolves.toBe(0);
+    expect(JSON.parse(stdout.join("")).command).toEqual([
+      "xcrun",
+      "altool",
+      "--upload-package",
+      "Spoonjoy.ipa",
+      "--username",
+      "ari@example.com",
+      "--password",
+      "[REDACTED_SECRET]",
+      "--output-format",
+      "json",
+      "--wait"
+    ]);
   });
 
   it("dry-runs xcode commands as JSON without invoking Apple tooling", async () => {
@@ -845,6 +1255,204 @@ describe("CLI scaffold", () => {
     await expect(cli(["asc", "smoke"])).resolves.toBe(0);
     expect(stdout.join("")).toBe("App Store Connect API smoke passed\n");
   });
+
+  it("prints JSON for authenticated asc get through injected dependencies", async () => {
+    const stdout: string[] = [];
+    const calls: unknown[] = [];
+    const cli = createCli(
+      { stdout: (chunk) => stdout.push(chunk), stderr: () => undefined },
+      {
+        getAppStoreConnect: async (input) => {
+          calls.push(input);
+          return { data: [{ id: "build-123" }] };
+        }
+      }
+    );
+
+    await expect(
+      cli([
+        "--json",
+        "asc",
+        "get",
+        "--config",
+        "/tmp/config.json",
+        "--path",
+        "/v1/builds",
+        "--query",
+        "filter[app]=app-123",
+        "--query",
+        "sort=-uploadedDate"
+      ])
+    ).resolves.toBe(0);
+    expect(calls).toEqual([
+      {
+        configPath: "/tmp/config.json",
+        path: "/v1/builds",
+        query: { "filter[app]": "app-123", sort: "-uploadedDate" }
+      }
+    ]);
+    expect(JSON.parse(stdout.join(""))).toEqual({ ok: true, result: { data: [{ id: "build-123" }] } });
+  });
+
+  it("prints text for asc get and rejects missing or malformed input", async () => {
+    const stdout: string[] = [];
+    const cli = createCli(
+      { stdout: (chunk) => stdout.push(chunk), stderr: () => undefined },
+      { getAppStoreConnect: async () => ({ data: [] }) }
+    );
+
+    await expect(cli(["asc", "get", "--path", "/v1/apps"])).resolves.toBe(0);
+    expect(stdout.join("")).toBe("{\n  \"data\": []\n}\n");
+
+    stdout.splice(0);
+    await expect(cli(["--json", "asc", "get"])).resolves.toBe(64);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: { code: "missing_path", message: "asc get requires --path <path>" }
+    });
+
+    stdout.splice(0);
+    await expect(cli(["--json", "asc", "get", "--path", "/v1/apps", "--query", "bad"])).resolves.toBe(69);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: { code: "asc_get_failed", message: "Expected --query value to be name=id, got: bad" }
+    });
+  });
+
+  it("runs asc get through the default App Store Connect client", async () => {
+    const dir = await makeTempDir();
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const keyPath = join(dir, "AuthKey_TEST.p8");
+    const configPath = join(dir, "config.json");
+    const originalFetch = globalThis.fetch;
+    const stdout: string[] = [];
+    await writeFile(keyPath, privateKey.export({ format: "pem", type: "pkcs8" }).toString());
+    await writeFile(configPath, JSON.stringify({ issuerId: "issuer", keyId: "KEY", privateKeyPath: keyPath }));
+    globalThis.fetch = (async () => new Response(JSON.stringify({ data: [{ id: "app-123" }] }), { status: 200 })) as typeof fetch;
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+
+    try {
+      await expect(
+        cli(["--json", "asc", "get", "--config", configPath, "--path", "/v1/apps", "--query", "limit=1"])
+      ).resolves.toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(JSON.parse(stdout.join(""))).toEqual({ ok: true, result: { data: [{ id: "app-123" }] } });
+  });
+
+  it("blocks TestFlight publish when the planning gate has blockers", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    const manifest = testFlightManifest() as any;
+    const calls: unknown[] = [];
+    manifest.channels[0]!.testflight.build = {};
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const stdout: string[] = [];
+    const cli = createCli(
+      { stdout: (chunk) => stdout.push(chunk), stderr: () => undefined },
+      {
+        publishTestFlightRequests: async (input) => {
+          calls.push(input);
+          return { ok: true, results: [] };
+        }
+      }
+    );
+
+    await expect(
+      cli([
+        "--json",
+        "testflight",
+        "publish",
+        "--mode",
+        "apply",
+        "--manifest",
+        manifestPath,
+        "--channel",
+        "ios-testflight",
+        "--app-id",
+        "app-123",
+        "--build-id",
+        "build-123"
+      ])
+    ).resolves.toBe(65);
+    expect(calls).toEqual([]);
+    expect(JSON.parse(stdout.join(""))).toEqual({
+      ok: false,
+      error: {
+        code: "testflight_publish_blocked",
+        message: "testflight publish blocked: testflight-whats-new-required",
+        details: {
+          blockers: [
+            {
+              code: "testflight-whats-new-required",
+              message: "TestFlight builds need tester-facing what-to-test notes.",
+              evidence: { channelId: "ios-testflight", locale: "en-US" }
+            }
+          ]
+        }
+      }
+    });
+  });
+
+  it("redacts TestFlight demo credentials in dry-run artifacts and apply output", async () => {
+    const dir = await makeTempDir();
+    const manifestPath = join(dir, "apple-distribution.json");
+    const artifactPath = join(dir, "testflight-publish.json");
+    await writeFile(manifestPath, JSON.stringify(testFlightExternalDemoManifest()));
+    const stdout: string[] = [];
+    const cli = createCli(
+      { stdout: (chunk) => stdout.push(chunk), stderr: () => undefined },
+      { publishTestFlightRequests: async () => ({ ok: true, results: [{ ok: true }] }) }
+    );
+
+    await expect(
+      cli([
+        "--json",
+        "testflight",
+        "publish",
+        "--manifest",
+        manifestPath,
+        "--channel",
+        "ios-testflight",
+        "--app-id",
+        "app-123",
+        "--build-id",
+        "build-123",
+        "--beta-app-review-detail-id",
+        "review-detail-123",
+        "--artifact",
+        artifactPath
+      ])
+    ).resolves.toBe(0);
+    expect(stdout.join("")).toContain("[REDACTED_SECRET]");
+    expect(stdout.join("")).not.toContain("super-secret-demo-password");
+    await expect(readFile(artifactPath, "utf8")).resolves.toContain("[REDACTED_SECRET]");
+    await expect(readFile(artifactPath, "utf8")).resolves.not.toContain("super-secret-demo-password");
+
+    stdout.splice(0);
+    await expect(
+      cli([
+        "--json",
+        "testflight",
+        "publish",
+        "--mode",
+        "apply",
+        "--manifest",
+        manifestPath,
+        "--channel",
+        "ios-testflight",
+        "--app-id",
+        "app-123",
+        "--build-id",
+        "build-123",
+        "--beta-app-review-detail-id",
+        "review-detail-123"
+      ])
+    ).resolves.toBe(0);
+    expect(stdout.join("")).toContain("[REDACTED_SECRET]");
+    expect(stdout.join("")).not.toContain("super-secret-demo-password");
+  });
 });
 
 function minimalManifest() {
@@ -860,6 +1468,59 @@ function minimalManifest() {
         bundleId: "bot.example",
         buildCommand: "build",
         packageCommand: "package"
+      }
+    ]
+  };
+}
+
+function testFlightManifest() {
+  return {
+    schemaVersion: 1,
+    app: { name: "Spoonjoy", bundleId: "app.spoonjoy", primaryLocale: "en-US" },
+    team: { teamId: "TEAMID", providerPublicId: "9735080289" },
+    channels: [
+      {
+        id: "ios-testflight",
+        platform: "ios",
+        distribution: "testflight",
+        bundleId: "app.spoonjoy",
+        buildCommand: "build-ios",
+        packageCommand: "package-ios",
+        store: {
+          version: "1.0",
+          copyright: "Copyright 2026",
+          category: "FOOD_AND_DRINK",
+          privacy: { policyUrl: "https://spoonjoy.app/privacy", collectsData: true },
+          exportCompliance: { usesEncryption: true, exempt: true }
+        },
+        testflight: {
+          groups: [{ name: "Internal", type: "internal" }],
+          build: { whatsNew: "Try the recipe inbox." }
+        }
+      }
+    ]
+  };
+}
+
+function testFlightExternalDemoManifest() {
+  return {
+    ...testFlightManifest(),
+    channels: [
+      {
+        ...testFlightManifest().channels[0],
+        testflight: {
+          groups: [{ name: "External Friends", type: "external", publicLinkEnabled: true, publicLinkLimit: 100 }],
+          build: { whatsNew: "Try the external beta." },
+          betaReview: {
+            contactFirstName: "Ari",
+            contactLastName: "Mendelow",
+            contactPhone: "+12065550100",
+            contactEmail: "ari@example.com",
+            demoAccountRequired: true,
+            demoAccountName: "demo@example.com",
+            demoAccountPassword: "super-secret-demo-password"
+          }
+        }
       }
     ]
   };

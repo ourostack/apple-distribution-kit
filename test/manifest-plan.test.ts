@@ -78,6 +78,45 @@ describe("manifest validation", () => {
     });
   });
 
+  it("accepts TestFlight metadata for iOS beta channels", () => {
+    const manifest = {
+      ...validManifest(),
+      channels: [
+        {
+          id: "ios-testflight",
+          platform: "ios",
+          distribution: "testflight",
+          bundleId: "app.spoonjoy",
+          buildCommand: "build-ios",
+          packageCommand: "package-ios",
+          testflight: {
+            groups: [
+              { name: "Internal", type: "internal", feedbackEnabled: true },
+              { name: "External", type: "external", publicLinkEnabled: true, publicLinkLimit: 100 }
+            ],
+            build: { whatsNew: "Try the new beta.", autoNotifyEnabled: false, notifyTesters: true },
+            betaApp: {
+              description: "A friendly beta.",
+              feedbackEmail: "beta@example.com",
+              marketingUrl: "https://example.com",
+              privacyPolicyUrl: "https://example.com/privacy"
+            },
+            betaReview: {
+              contactFirstName: "Ari",
+              contactLastName: "Mendelow",
+              contactPhone: "+12065550100",
+              contactEmail: "ari@example.com",
+              demoAccountRequired: false,
+              notes: "No login required."
+            }
+          }
+        }
+      ]
+    };
+
+    expect(validateManifestObject(manifest)).toEqual({ ok: true, manifest });
+  });
+
   it("reports JSON-pointer-like validation errors", () => {
     const manifest = validManifest();
     manifest.channels[0]!.bundleId = "";
@@ -122,6 +161,149 @@ describe("manifest validation", () => {
       },
       "/channels/0/platform",
       "TestFlight channels are only supported for iOS"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [{ ...validManifest().channels[0], platform: "ios", distribution: "testflight" }]
+      },
+      "/channels/0/testflight",
+      "TestFlight channels require testflight metadata"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            platform: "ios",
+            distribution: "testflight",
+            testflight: null
+          }
+        ]
+      },
+      "/channels/0/testflight",
+      "Expected object"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            platform: "ios",
+            distribution: "testflight",
+            testflight: { groups: [] }
+          }
+        ]
+      },
+      "/channels/0/testflight/groups",
+      "Expected non-empty array"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            platform: "ios",
+            distribution: "testflight",
+            testflight: { groups: [null] }
+          }
+        ]
+      },
+      "/channels/0/testflight/groups/0",
+      "Expected object"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            platform: "ios",
+            distribution: "testflight",
+            testflight: { groups: [{ name: "Beta" }, { name: "Beta" }] }
+          }
+        ]
+      },
+      "/channels/0/testflight/groups/1/name",
+      "Duplicate TestFlight group name: Beta"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            platform: "ios",
+            distribution: "testflight",
+            testflight: { groups: [{ name: "Beta", publicLinkLimit: 0 }] }
+          }
+        ]
+      },
+      "/channels/0/testflight/groups/0/publicLinkLimit",
+      "Expected integer between 1 and 10000"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            platform: "ios",
+            distribution: "testflight",
+            testflight: { groups: [{ name: "Beta", publicLinkLimit: 10001 }] }
+          }
+        ]
+      },
+      "/channels/0/testflight/groups/0/publicLinkLimit",
+      "Expected integer between 1 and 10000"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            platform: "ios",
+            distribution: "testflight",
+            testflight: { groups: [{ name: "Beta" }], build: null }
+          }
+        ]
+      },
+      "/channels/0/testflight/build",
+      "Expected object"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            platform: "ios",
+            distribution: "testflight",
+            testflight: { groups: [{ name: "Beta" }], betaApp: null }
+          }
+        ]
+      },
+      "/channels/0/testflight/betaApp",
+      "Expected object"
+    ],
+    [
+      {
+        ...validManifest(),
+        channels: [
+          {
+            ...validManifest().channels[0],
+            platform: "ios",
+            distribution: "testflight",
+            testflight: { groups: [{ name: "Beta" }], betaReview: null }
+          }
+        ]
+      },
+      "/channels/0/testflight/betaReview",
+      "Expected object"
     ]
   ])("rejects semantic channel mismatch %#", (manifest, path, message) => {
     const result = validateManifestObject(manifest);
@@ -242,6 +424,8 @@ describe("redaction", () => {
     expect(
       redactSecrets({
         token: "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiIxMjMifQ.signature",
+        bundleId: "bot.ouro.md",
+        apiUrl: "https://api.appstoreconnect.apple.com/v1/apps",
         privateKey: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
         path: "/tmp/AuthKey_ABC123.p8",
         password: "abcd-efgh-ijkl-mnop",
@@ -249,6 +433,8 @@ describe("redaction", () => {
       })
     ).toEqual({
       token: "[REDACTED_JWT]",
+      bundleId: "bot.ouro.md",
+      apiUrl: "https://api.appstoreconnect.apple.com/v1/apps",
       privateKey: "[REDACTED_PRIVATE_KEY]",
       path: "/tmp/[REDACTED_AUTH_KEY_FILE]",
       password: "[REDACTED_SECRET]",

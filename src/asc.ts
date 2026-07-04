@@ -24,6 +24,14 @@ export interface AppStoreConnectClientOptions {
 
 export interface AppStoreConnectClient {
   get: (path: string, query?: Record<string, string>) => Promise<unknown>;
+  request: (input: AppStoreConnectRequest) => Promise<unknown>;
+}
+
+export interface AppStoreConnectRequest {
+  method: "GET" | "POST" | "PATCH" | "DELETE";
+  path: string;
+  query?: Record<string, string>;
+  body?: unknown;
 }
 
 export class AppStoreConnectError extends Error {
@@ -70,20 +78,27 @@ export function signAppStoreConnectJwt(input: JwtInput): string {
 export function createAppStoreConnectClient(options: AppStoreConnectClientOptions): AppStoreConnectClient {
   const fetchImpl = options.fetch ?? fetch;
   const baseUrl = options.baseUrl ?? "https://api.appstoreconnect.apple.com";
-  return {
-    get: async (path, query = {}) => {
-      const url = new URL(path, baseUrl);
-      Object.entries(query).forEach(([key, value]) => url.searchParams.set(key, value));
-      const token = signAppStoreConnectJwt(options.now ? { ...options.auth, now: options.now } : options.auth);
-      const response = await fetchImpl(url, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${token}`
-        }
-      });
-      return parseResponse(response);
+  const send = async (input: AppStoreConnectRequest): Promise<unknown> => {
+    const url = new URL(input.path, baseUrl);
+    Object.entries(input.query ?? {}).forEach(([key, value]) => url.searchParams.set(key, value));
+    const token = signAppStoreConnectJwt(options.now ? { ...options.auth, now: options.now } : options.auth);
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`
+    };
+    if (input.body !== undefined) {
+      headers["Content-Type"] = "application/json";
     }
+    const response = await fetchImpl(url, {
+      method: input.method,
+      headers,
+      ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {})
+    });
+    return parseResponse(response);
+  };
+  return {
+    get: async (path, query = {}) => send({ method: "GET", path, query }),
+    request: send
   };
 }
 
@@ -116,10 +131,28 @@ export async function smokeAppStoreConnect(input: { configPath: string; fetch?: 
   return redactSecrets(result);
 }
 
+export async function getAppStoreConnect(input: {
+  configPath: string;
+  path: string;
+  query?: Record<string, string>;
+  fetch?: typeof fetch;
+  now?: Date;
+}): Promise<unknown> {
+  const auth = await loadAscAuth(input.configPath);
+  const client = createAppStoreConnectClient({
+    auth,
+    ...(input.fetch ? { fetch: input.fetch } : {}),
+    ...(input.now ? { now: input.now } : {})
+  });
+  return redactSecrets(await client.get(input.path, input.query));
+}
+
 async function parseResponse(response: Response): Promise<unknown> {
   let parsed: unknown;
+  let raw: string;
   try {
-    parsed = JSON.parse(await response.text());
+    raw = await response.text();
+    parsed = raw.trim() === "" ? null : JSON.parse(raw);
   } catch {
     throw new AppStoreConnectError({
       status: response.status,
@@ -139,7 +172,7 @@ async function parseResponse(response: Response): Promise<unknown> {
     });
   }
 
-  return parsed;
+  return parsed ?? { ok: true };
 }
 
 function firstAppleError(parsed: unknown): { code: string; title: string } {
