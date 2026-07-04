@@ -71,6 +71,11 @@ export async function executeTestFlightRequests(input: {
 }): Promise<TestFlightPublishResult> {
   const results = [];
   for (const request of input.requests) {
+    const idempotentSkip = await maybeSkipBuildExportComplianceRequest(input.client, request);
+    if (idempotentSkip) {
+      results.push(idempotentSkip);
+      continue;
+    }
     results.push(
       await input.client.request({
         method: request.method,
@@ -80,6 +85,32 @@ export async function executeTestFlightRequests(input: {
     );
   }
   return { ok: true, results: redactSecrets(results) };
+}
+
+async function maybeSkipBuildExportComplianceRequest(
+  client: AppStoreConnectClient,
+  request: TestFlightRequest
+): Promise<Record<string, unknown> | undefined> {
+  if (request.method !== "PATCH" || !request.path.startsWith("/v1/builds/")) {
+    return undefined;
+  }
+  const desired = buildExportComplianceValue(request.body);
+  if (desired === undefined) {
+    return undefined;
+  }
+
+  const current = await client.get(request.path);
+  if (currentBuildExportComplianceValue(current) !== desired) {
+    return undefined;
+  }
+
+  return {
+    ok: true,
+    skipped: true,
+    path: request.path,
+    reason: "build-export-compliance-already-set",
+    usesNonExemptEncryption: desired
+  };
 }
 
 export function planTestFlightSubmission(input: {
@@ -367,4 +398,22 @@ function compact(input: Record<string, unknown>): Record<string, unknown> {
 
 function nonEmptyString(value: unknown): boolean {
   return typeof value === "string" && value.trim() !== "";
+}
+
+function buildExportComplianceValue(body: Record<string, unknown>): boolean | undefined {
+  const data = recordValue(body.data);
+  const attributes = recordValue(data?.attributes);
+  const value = attributes?.usesNonExemptEncryption;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function currentBuildExportComplianceValue(response: unknown): boolean | undefined {
+  const data = recordValue(recordValue(response)?.data);
+  const attributes = recordValue(data?.attributes);
+  const value = attributes?.usesNonExemptEncryption;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }

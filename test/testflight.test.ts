@@ -470,6 +470,63 @@ describe("TestFlight request execution", () => {
     ]);
   });
 
+  it("skips build export compliance PATCH requests when the desired value is already set", async () => {
+    const calls: string[] = [];
+    const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async (path: string) => {
+        calls.push(`GET ${path}`);
+        return {
+          data: {
+            type: "builds",
+            id: "build-123",
+            attributes: { usesNonExemptEncryption: false }
+          }
+        };
+      },
+      request: async (input) => {
+        calls.push(`${input.method} ${input.path}`);
+        return { ok: true };
+      }
+    };
+
+    await expect(
+      executeTestFlightRequests({
+        client,
+        requests: [
+          {
+            method: "PATCH",
+            path: "/v1/builds/build-123",
+            body: {
+              data: {
+                type: "builds",
+                id: "build-123",
+                attributes: { usesNonExemptEncryption: false }
+              }
+            }
+          },
+          {
+            method: "POST",
+            path: "/v1/buildBetaNotifications",
+            body: { data: { type: "buildBetaNotifications" } }
+          }
+        ]
+      })
+    ).resolves.toEqual({
+      ok: true,
+      results: [
+        {
+          ok: true,
+          skipped: true,
+          path: "/v1/builds/build-123",
+          reason: "build-export-compliance-already-set",
+          usesNonExemptEncryption: false
+        },
+        { ok: true }
+      ]
+    });
+    expect(calls).toEqual(["GET /v1/builds/build-123", "POST /v1/buildBetaNotifications"]);
+  });
+
   it("publishes requests from an on-disk ASC config", async () => {
     const dir = await makeTempDir();
     const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
