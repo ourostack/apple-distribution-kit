@@ -83,6 +83,7 @@ describe("TestFlight submission planner", () => {
       actions: [
         { type: "upload-testflight-build", channelId: "ios-testflight", platform: "IOS" },
         { type: "wait-for-processed-build", channelId: "ios-testflight", platform: "IOS" },
+        { type: "set-build-export-compliance", channelId: "ios-testflight", platform: "IOS" },
         { type: "ensure-beta-app-localization", channelId: "ios-testflight", platform: "IOS", locale: "en-US" },
         { type: "configure-beta-groups", channelId: "ios-testflight", platform: "IOS", groupCount: 2 },
         { type: "attach-build-to-beta-groups", channelId: "ios-testflight", platform: "IOS", groupCount: 2 },
@@ -159,6 +160,7 @@ describe("TestFlight submission planner", () => {
       actions: [
         { type: "upload-testflight-build", channelId: "ios-testflight", platform: "IOS" },
         { type: "wait-for-processed-build", channelId: "ios-testflight", platform: "IOS" },
+        { type: "set-build-export-compliance", channelId: "ios-testflight", platform: "IOS" },
         { type: "ensure-beta-app-localization", channelId: "ios-testflight", platform: "IOS", locale: "en-US" },
         { type: "configure-beta-groups", channelId: "ios-testflight", platform: "IOS", groupCount: 1 },
         { type: "attach-build-to-beta-groups", channelId: "ios-testflight", platform: "IOS", groupCount: 1 },
@@ -264,6 +266,17 @@ describe("TestFlight request builder", () => {
         groupIdsByName: { "Spoonjoy Internal": "group-1" }
       })
     ).toEqual([
+      {
+        method: "PATCH",
+        path: "/v1/builds/build-123",
+        body: {
+          data: {
+            type: "builds",
+            id: "build-123",
+            attributes: { usesNonExemptEncryption: false }
+          }
+        }
+      },
       {
         method: "POST",
         path: "/v1/betaAppLocalizations",

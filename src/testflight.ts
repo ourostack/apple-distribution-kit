@@ -24,6 +24,7 @@ export interface TestFlightPlanAction {
   type:
     | "upload-testflight-build"
     | "wait-for-processed-build"
+    | "set-build-export-compliance"
     | "ensure-beta-app-localization"
     | "configure-beta-groups"
     | "attach-build-to-beta-groups"
@@ -156,6 +157,7 @@ export function planTestFlightSubmission(input: {
       ? [
           { type: "upload-testflight-build", channelId: input.channelId, platform: "IOS" },
           { type: "wait-for-processed-build", channelId: input.channelId, platform: "IOS" },
+          { type: "set-build-export-compliance", channelId: input.channelId, platform: "IOS" },
           { type: "ensure-beta-app-localization", channelId: input.channelId, platform: "IOS", locale },
           { type: "configure-beta-groups", channelId: input.channelId, platform: "IOS", groupCount: groups.length },
           { type: "attach-build-to-beta-groups", channelId: input.channelId, platform: "IOS", groupCount: groups.length },
@@ -192,6 +194,23 @@ export function buildTestFlightRequests(input: TestFlightRequestInput): TestFlig
   const privacyPolicyUrl = testflight.betaApp?.privacyPolicyUrl ?? channel.store?.privacy?.policyUrl;
   const externalGroups = testflight.groups.filter((group) => group.type === "external");
   const requests: TestFlightRequest[] = [];
+  const exportCompliance = channel.store?.exportCompliance;
+
+  if (exportCompliance) {
+    requests.push({
+      method: "PATCH",
+      path: `/v1/builds/${encodeURIComponent(input.buildId)}`,
+      body: {
+        data: {
+          type: "builds",
+          id: input.buildId,
+          attributes: {
+            usesNonExemptEncryption: exportCompliance.usesEncryption && !exportCompliance.exempt
+          }
+        }
+      }
+    });
+  }
 
   if (testflight.betaApp || privacyPolicyUrl) {
     requests.push({
