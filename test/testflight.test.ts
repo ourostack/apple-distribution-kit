@@ -527,6 +527,102 @@ describe("TestFlight request execution", () => {
     expect(calls).toEqual(["GET /v1/builds/build-123", "POST /v1/buildBetaNotifications"]);
   });
 
+  it("patches existing TestFlight localizations and skips already attached group builds", async () => {
+    const calls: string[] = [];
+    const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async (path: string) => {
+        calls.push(`GET ${path}`);
+        if (path === "/v1/apps/app-123/betaAppLocalizations") {
+          return {
+            data: [
+              {
+                type: "betaAppLocalizations",
+                id: "app-loc-1",
+                attributes: { locale: "en-US" }
+              }
+            ]
+          };
+        }
+        if (path === "/v1/betaGroups/group-1/relationships/builds") {
+          return {
+            data: [{ type: "builds", id: "build-123" }]
+          };
+        }
+        if (path === "/v1/builds/build-123/betaBuildLocalizations") {
+          return {
+            data: [
+              {
+                type: "betaBuildLocalizations",
+                id: "build-loc-1",
+                attributes: { locale: "en-US" }
+              }
+            ]
+          };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      },
+      request: async (input) => {
+        calls.push(`${input.method} ${input.path} ${JSON.stringify(input.body)}`);
+        return { ok: true };
+      }
+    };
+
+    await expect(
+      executeTestFlightRequests({
+        client,
+        requests: [
+          {
+            method: "POST",
+            path: "/v1/betaAppLocalizations",
+            body: {
+              data: {
+                type: "betaAppLocalizations",
+                attributes: { locale: "en-US", description: "Spoonjoy", feedbackEmail: "beta@spoonjoy.app" },
+                relationships: { app: { data: { type: "apps", id: "app-123" } } }
+              }
+            }
+          },
+          {
+            method: "POST",
+            path: "/v1/betaGroups/group-1/relationships/builds",
+            body: { data: [{ type: "builds", id: "build-123" }] }
+          },
+          {
+            method: "POST",
+            path: "/v1/betaBuildLocalizations",
+            body: {
+              data: {
+                type: "betaBuildLocalizations",
+                attributes: { locale: "en-US", whatsNew: "Internal dogfood." },
+                relationships: { build: { data: { type: "builds", id: "build-123" } } }
+              }
+            }
+          }
+        ]
+      })
+    ).resolves.toEqual({
+      ok: true,
+      results: [
+        { ok: true },
+        {
+          ok: true,
+          skipped: true,
+          path: "/v1/betaGroups/group-1/relationships/builds",
+          reason: "beta-group-build-relationship-already-set",
+          buildIds: ["build-123"]
+        },
+        { ok: true }
+      ]
+    });
+    expect(calls).toEqual([
+      "GET /v1/apps/app-123/betaAppLocalizations",
+      'PATCH /v1/betaAppLocalizations/app-loc-1 {"data":{"type":"betaAppLocalizations","id":"app-loc-1","attributes":{"description":"Spoonjoy","feedbackEmail":"beta@spoonjoy.app"}}}',
+      "GET /v1/betaGroups/group-1/relationships/builds",
+      "GET /v1/builds/build-123/betaBuildLocalizations",
+      'PATCH /v1/betaBuildLocalizations/build-loc-1 {"data":{"type":"betaBuildLocalizations","id":"build-loc-1","attributes":{"whatsNew":"Internal dogfood."}}}'
+    ]);
+  });
+
   it("publishes requests from an on-disk ASC config", async () => {
     const dir = await makeTempDir();
     const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
