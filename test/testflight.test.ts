@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  AppStoreConnectError,
   buildTestFlightRequests,
   createAppStoreConnectClient,
   executeTestFlightRequests,
@@ -621,6 +622,120 @@ describe("TestFlight request execution", () => {
       "GET /v1/builds/build-123/betaBuildLocalizations",
       'PATCH /v1/betaBuildLocalizations/build-loc-1 {"data":{"type":"betaBuildLocalizations","id":"build-loc-1","attributes":{"whatsNew":"Internal dogfood."}}}'
     ]);
+  });
+
+  it("treats already enabled TestFlight notifications as an idempotent publish result", async () => {
+    const calls: string[] = [];
+    const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async (path: string) => {
+        calls.push(`GET ${path}`);
+        if (path === "/v1/buildBetaDetails/build-123") {
+          return {
+            data: {
+              type: "buildBetaDetails",
+              id: "build-123",
+              attributes: {
+                autoNotifyEnabled: true,
+                internalBuildState: "IN_BETA_TESTING"
+              }
+            }
+          };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      },
+      request: async (input) => {
+        calls.push(`${input.method} ${input.path} ${JSON.stringify(input.body)}`);
+        throw new AppStoreConnectError({
+          status: 409,
+          code: "STATE_ERROR",
+          message: "There is a problem with the request entity",
+          retryable: true
+        });
+      }
+    };
+
+    await expect(
+      executeTestFlightRequests({
+        client,
+        requests: [
+          {
+            method: "POST",
+            path: "/v1/buildBetaNotifications",
+            body: {
+              data: {
+                type: "buildBetaNotifications",
+                relationships: { build: { data: { type: "builds", id: "build-123" } } }
+              }
+            }
+          }
+        ]
+      })
+    ).resolves.toEqual({
+      ok: true,
+      results: [
+        {
+          ok: true,
+          skipped: true,
+          path: "/v1/buildBetaNotifications",
+          reason: "beta-notification-already-enabled-or-in-testing",
+          buildId: "build-123",
+          status: 409,
+          code: "STATE_ERROR",
+          message: "There is a problem with the request entity",
+          autoNotifyEnabled: true,
+          internalBuildState: "IN_BETA_TESTING"
+        }
+      ]
+    });
+    expect(calls).toEqual([
+      'POST /v1/buildBetaNotifications {"data":{"type":"buildBetaNotifications","relationships":{"build":{"data":{"type":"builds","id":"build-123"}}}}}',
+      "GET /v1/buildBetaDetails/build-123"
+    ]);
+  });
+
+  it("does not swallow TestFlight notification conflicts until Apple state proves the build is available", async () => {
+    const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async () => ({
+        data: {
+          type: "buildBetaDetails",
+          id: "build-123",
+          attributes: {
+            autoNotifyEnabled: false,
+            internalBuildState: "PROCESSING"
+          }
+        }
+      }),
+      request: async () => {
+        throw new AppStoreConnectError({
+          status: 409,
+          code: "STATE_ERROR",
+          message: "There is a problem with the request entity",
+          retryable: true
+        });
+      }
+    };
+
+    await expect(
+      executeTestFlightRequests({
+        client,
+        requests: [
+          {
+            method: "POST",
+            path: "/v1/buildBetaNotifications",
+            body: {
+              data: {
+                type: "buildBetaNotifications",
+                relationships: { build: { data: { type: "builds", id: "build-123" } } }
+              }
+            }
+          }
+        ]
+      })
+    ).rejects.toMatchObject({
+      name: "AppStoreConnectError",
+      status: 409,
+      code: "STATE_ERROR"
+    });
   });
 
   it("publishes requests from an on-disk ASC config", async () => {

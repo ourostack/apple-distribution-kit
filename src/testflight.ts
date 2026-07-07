@@ -1,5 +1,5 @@
 import type { AppStoreConnectClient } from "./asc.js";
-import { createAppStoreConnectClient, loadAscAuth } from "./asc.js";
+import { AppStoreConnectError, createAppStoreConnectClient, loadAscAuth } from "./asc.js";
 import type { AppleDistributionManifest, DistributionChannel, TestFlightGroup } from "./manifest.js";
 import type { ReconcileBlocker } from "./reconcile.js";
 import { redactSecrets } from "./redaction.js";
@@ -82,15 +82,69 @@ export async function executeTestFlightRequests(input: {
       results.push(idempotentSkip);
       continue;
     }
-    results.push(
-      await input.client.request({
-        method: requestToSend.method,
-        path: requestToSend.path,
-        body: requestToSend.body
-      })
-    );
+    try {
+      results.push(
+        await input.client.request({
+          method: requestToSend.method,
+          path: requestToSend.path,
+          body: requestToSend.body
+        })
+      );
+    } catch (error) {
+      const idempotentNotificationSkip = await maybeSkipIdempotentBetaNotificationError(input.client, requestToSend, error);
+      if (idempotentNotificationSkip) {
+        results.push(idempotentNotificationSkip);
+        continue;
+      }
+      throw error;
+    }
   }
   return { ok: true, results: redactSecrets(results) };
+}
+
+async function maybeSkipIdempotentBetaNotificationError(
+  client: AppStoreConnectClient,
+  request: TestFlightRequest,
+  error: unknown
+): Promise<Record<string, unknown> | undefined> {
+  if (
+    !(error instanceof AppStoreConnectError) ||
+    error.status !== 409 ||
+    request.method !== "POST" ||
+    request.path !== "/v1/buildBetaNotifications"
+  ) {
+    return undefined;
+  }
+  const buildId = relationshipDataId(recordValue(request.body.data), "build");
+  if (!buildId) {
+    return undefined;
+  }
+
+  let betaDetail: unknown;
+  try {
+    betaDetail = await client.get(`/v1/buildBetaDetails/${encodeURIComponent(buildId)}`);
+  } catch {
+    return undefined;
+  }
+  const attributes = recordValue(recordValue(betaDetail)?.data)?.attributes;
+  const autoNotifyEnabled = recordValue(attributes)?.autoNotifyEnabled === true;
+  const internalBuildState = stringValue(recordValue(attributes)?.internalBuildState);
+  if (!autoNotifyEnabled && internalBuildState !== "IN_BETA_TESTING") {
+    return undefined;
+  }
+
+  return {
+    ok: true,
+    skipped: true,
+    path: request.path,
+    reason: "beta-notification-already-enabled-or-in-testing",
+    buildId,
+    status: error.status,
+    code: error.code,
+    message: error.message,
+    autoNotifyEnabled,
+    internalBuildState
+  };
 }
 
 async function maybeResolveIdempotentTestFlightRequest(
