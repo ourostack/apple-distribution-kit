@@ -1,5 +1,5 @@
 import type { AppStoreConnectClient } from "./asc.js";
-import { createAppStoreConnectClient, loadAscAuth } from "./asc.js";
+import { AppStoreConnectError, createAppStoreConnectClient, loadAscAuth } from "./asc.js";
 import type { AppleDistributionManifest, DistributionChannel, TestFlightGroup } from "./manifest.js";
 import type { ReconcileBlocker } from "./reconcile.js";
 import { redactSecrets } from "./redaction.js";
@@ -71,20 +71,211 @@ export async function executeTestFlightRequests(input: {
 }): Promise<TestFlightPublishResult> {
   const results = [];
   for (const request of input.requests) {
-    const idempotentSkip = await maybeSkipBuildExportComplianceRequest(input.client, request);
+    const resolvedRequest = await maybeResolveIdempotentTestFlightRequest(input.client, request);
+    if (resolvedRequest?.result) {
+      results.push(resolvedRequest.result);
+      continue;
+    }
+    const requestToSend = resolvedRequest?.request ?? request;
+    const idempotentSkip = await maybeSkipBuildExportComplianceRequest(input.client, requestToSend);
     if (idempotentSkip) {
       results.push(idempotentSkip);
       continue;
     }
-    results.push(
-      await input.client.request({
-        method: request.method,
-        path: request.path,
-        body: request.body
-      })
-    );
+    try {
+      results.push(
+        await input.client.request({
+          method: requestToSend.method,
+          path: requestToSend.path,
+          body: requestToSend.body
+        })
+      );
+    } catch (error) {
+      const idempotentNotificationSkip = await maybeSkipIdempotentBetaNotificationError(input.client, requestToSend, error);
+      if (idempotentNotificationSkip) {
+        results.push(idempotentNotificationSkip);
+        continue;
+      }
+      throw error;
+    }
   }
   return { ok: true, results: redactSecrets(results) };
+}
+
+async function maybeSkipIdempotentBetaNotificationError(
+  client: AppStoreConnectClient,
+  request: TestFlightRequest,
+  error: unknown
+): Promise<Record<string, unknown> | undefined> {
+  if (
+    !(error instanceof AppStoreConnectError) ||
+    error.status !== 409 ||
+    request.method !== "POST" ||
+    request.path !== "/v1/buildBetaNotifications"
+  ) {
+    return undefined;
+  }
+  const buildId = relationshipDataId(recordValue(request.body.data), "build");
+  if (!buildId) {
+    return undefined;
+  }
+
+  let betaDetail: unknown;
+  try {
+    betaDetail = await client.get(`/v1/buildBetaDetails/${encodeURIComponent(buildId)}`);
+  } catch {
+    return undefined;
+  }
+  const attributes = recordValue(recordValue(betaDetail)?.data)?.attributes;
+  const autoNotifyEnabled = recordValue(attributes)?.autoNotifyEnabled === true;
+  const internalBuildState = stringValue(recordValue(attributes)?.internalBuildState);
+  if (!autoNotifyEnabled && internalBuildState !== "IN_BETA_TESTING") {
+    return undefined;
+  }
+
+  return {
+    ok: true,
+    skipped: true,
+    path: request.path,
+    reason: "beta-notification-already-enabled-or-in-testing",
+    buildId,
+    status: error.status,
+    code: error.code,
+    message: error.message,
+    autoNotifyEnabled,
+    internalBuildState
+  };
+}
+
+async function maybeResolveIdempotentTestFlightRequest(
+  client: AppStoreConnectClient,
+  request: TestFlightRequest
+): Promise<{ request?: TestFlightRequest; result?: Record<string, unknown> } | undefined> {
+  return (
+    (await maybePatchExistingBetaAppLocalizationRequest(client, request)) ??
+    (await maybePatchExistingBetaBuildLocalizationRequest(client, request)) ??
+    (await maybeSkipExistingBetaGroupBuildRelationshipRequest(client, request))
+  );
+}
+
+async function maybePatchExistingBetaAppLocalizationRequest(
+  client: AppStoreConnectClient,
+  request: TestFlightRequest
+): Promise<{ request: TestFlightRequest } | undefined> {
+  if (request.method !== "POST" || request.path !== "/v1/betaAppLocalizations") {
+    return undefined;
+  }
+
+  const data = recordValue(request.body.data);
+  const attributes = recordValue(data?.attributes);
+  const locale = stringValue(attributes?.locale);
+  const appId = relationshipDataId(data, "app");
+  if (!attributes || !locale || !appId) {
+    return undefined;
+  }
+
+  const response = await client.get(`/v1/apps/${encodeURIComponent(appId)}/betaAppLocalizations`, { limit: "200" });
+  const existingId = localizationIdForLocale(response, locale);
+  if (!existingId) {
+    return undefined;
+  }
+
+  return {
+    request: {
+      method: "PATCH",
+      path: `/v1/betaAppLocalizations/${encodeURIComponent(existingId)}`,
+      body: {
+        data: {
+          type: "betaAppLocalizations",
+          id: existingId,
+          attributes: withoutKey(attributes, "locale")
+        }
+      }
+    }
+  };
+}
+
+async function maybePatchExistingBetaBuildLocalizationRequest(
+  client: AppStoreConnectClient,
+  request: TestFlightRequest
+): Promise<{ request: TestFlightRequest } | undefined> {
+  if (request.method !== "POST" || request.path !== "/v1/betaBuildLocalizations") {
+    return undefined;
+  }
+
+  const data = recordValue(request.body.data);
+  const attributes = recordValue(data?.attributes);
+  const locale = stringValue(attributes?.locale);
+  const buildId = relationshipDataId(data, "build");
+  if (!attributes || !locale || !buildId) {
+    return undefined;
+  }
+
+  const response = await client.get(`/v1/builds/${encodeURIComponent(buildId)}/betaBuildLocalizations`, { limit: "200" });
+  const existingId = localizationIdForLocale(response, locale);
+  if (!existingId) {
+    return undefined;
+  }
+
+  return {
+    request: {
+      method: "PATCH",
+      path: `/v1/betaBuildLocalizations/${encodeURIComponent(existingId)}`,
+      body: {
+        data: {
+          type: "betaBuildLocalizations",
+          id: existingId,
+          attributes: withoutKey(attributes, "locale")
+        }
+      }
+    }
+  };
+}
+
+async function maybeSkipExistingBetaGroupBuildRelationshipRequest(
+  client: AppStoreConnectClient,
+  request: TestFlightRequest
+): Promise<{ request?: TestFlightRequest; result?: Record<string, unknown> } | undefined> {
+  if (request.method !== "POST") {
+    return undefined;
+  }
+  const match = request.path.match(/^\/v1\/betaGroups\/([^/]+)\/relationships\/builds$/);
+  if (!match) {
+    return undefined;
+  }
+  const requestedBuildIds = arrayValue(request.body.data)
+    .map((item) => recordValue(item))
+    .map((item) => stringValue(item?.id))
+    .filter((id): id is string => Boolean(id));
+  if (requestedBuildIds.length === 0) {
+    return undefined;
+  }
+
+  const response = await client.get(request.path, { limit: "200" });
+  const currentBuildIds = new Set(resourceIds(response));
+  const missingBuildIds = requestedBuildIds.filter((id) => !currentBuildIds.has(id));
+  if (missingBuildIds.length === 0) {
+    return {
+      result: {
+        ok: true,
+        skipped: true,
+        path: request.path,
+        reason: "beta-group-build-relationship-already-set",
+        buildIds: requestedBuildIds
+      }
+    };
+  }
+  if (missingBuildIds.length === requestedBuildIds.length) {
+    return undefined;
+  }
+  return {
+    request: {
+      ...request,
+      body: {
+        data: missingBuildIds.map((id) => ({ type: "builds", id }))
+      }
+    }
+  };
 }
 
 async function maybeSkipBuildExportComplianceRequest(
@@ -416,4 +607,37 @@ function currentBuildExportComplianceValue(response: unknown): boolean | undefin
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function relationshipDataId(data: Record<string, unknown> | undefined, relationshipName: string): string | undefined {
+  const relationships = recordValue(data?.relationships);
+  const relationship = recordValue(relationships?.[relationshipName]);
+  const relationshipData = recordValue(relationship?.data);
+  return stringValue(relationshipData?.id);
+}
+
+function localizationIdForLocale(response: unknown, locale: string): string | undefined {
+  const match = arrayValue(recordValue(response)?.data)
+    .map((item) => recordValue(item))
+    .find((item) => stringValue(recordValue(item?.attributes)?.locale) === locale);
+  return stringValue(match?.id);
+}
+
+function resourceIds(response: unknown): string[] {
+  return arrayValue(recordValue(response)?.data)
+    .map((item) => recordValue(item))
+    .map((item) => stringValue(item?.id))
+    .filter((id): id is string => Boolean(id));
+}
+
+function withoutKey(input: Record<string, unknown>, key: string): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([candidate]) => candidate !== key));
 }

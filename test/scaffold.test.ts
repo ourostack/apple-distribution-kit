@@ -297,8 +297,8 @@ describe("CLI scaffold", () => {
     } finally {
       process.chdir(originalCwd);
     }
-    expect(stdout.join("")).toContain("TestFlight plan: 6 actions, 0 blockers");
-    expect(stdout.join("")).toContain("TestFlight publish dry-run: 3 requests");
+    expect(stdout.join("")).toContain("TestFlight plan: 7 actions, 0 blockers");
+    expect(stdout.join("")).toContain("TestFlight publish dry-run: 4 requests");
   });
 
   it("prints store review-prep blockers and writes an artifact", async () => {
@@ -433,7 +433,7 @@ describe("CLI scaffold", () => {
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
 
     await expect(cli(["testflight", "plan", "--manifest", manifestPath, "--channel", "ios-testflight"])).resolves.toBe(0);
-    expect(stdout.join("")).toBe("TestFlight plan: 6 actions, 0 blockers\n");
+    expect(stdout.join("")).toBe("TestFlight plan: 7 actions, 0 blockers\n");
 
     stdout.splice(0);
     await expect(cli(["--json", "testflight", "plan", "--manifest", manifestPath, "--channel", "missing"])).resolves.toBe(65);
@@ -518,7 +518,7 @@ describe("CLI scaffold", () => {
         artifactPath
       ])
     ).resolves.toBe(0);
-    expect(stdout.join("")).toBe("TestFlight publish dry-run: 3 requests\n");
+    expect(stdout.join("")).toBe("TestFlight publish dry-run: 4 requests\n");
     await expect(readFile(artifactPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
       ok: true,
       mode: "dry-run"
@@ -591,7 +591,7 @@ describe("CLI scaffold", () => {
         "build-123"
       ])
     ).resolves.toBe(0);
-    expect(stdout.join("")).toBe("TestFlight publish applied: 3 requests\n");
+    expect(stdout.join("")).toBe("TestFlight publish applied: 4 requests\n");
   });
 
   it("rejects malformed TestFlight group-id options", async () => {
