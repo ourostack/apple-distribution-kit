@@ -528,6 +528,61 @@ describe("TestFlight request execution", () => {
     expect(calls).toEqual(["GET /v1/builds/build-123", "POST /v1/buildBetaNotifications"]);
   });
 
+  it("executes build export compliance PATCH requests when idempotency cannot be proven", async () => {
+    const calls: string[] = [];
+    const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async (path: string) => {
+        calls.push(`GET ${path}`);
+        return {
+          data: {
+            type: "builds",
+            id: "build-123",
+            attributes: {}
+          }
+        };
+      },
+      request: async (input) => {
+        calls.push(`${input.method} ${input.path} ${JSON.stringify(input.body)}`);
+        return { ok: true };
+      }
+    };
+
+    await expect(
+      executeTestFlightRequests({
+        client,
+        requests: [
+          {
+            method: "PATCH",
+            path: "/v1/builds/build-123",
+            body: {
+              data: {
+                type: "builds",
+                id: "build-123",
+                attributes: {}
+              }
+            }
+          },
+          {
+            method: "PATCH",
+            path: "/v1/builds/build-123",
+            body: {
+              data: {
+                type: "builds",
+                id: "build-123",
+                attributes: { usesNonExemptEncryption: false }
+              }
+            }
+          }
+        ]
+      })
+    ).resolves.toEqual({ ok: true, results: [{ ok: true }, { ok: true }] });
+    expect(calls).toEqual([
+      'PATCH /v1/builds/build-123 {"data":{"type":"builds","id":"build-123","attributes":{}}}',
+      "GET /v1/builds/build-123",
+      'PATCH /v1/builds/build-123 {"data":{"type":"builds","id":"build-123","attributes":{"usesNonExemptEncryption":false}}}'
+    ]);
+  });
+
   it("patches existing TestFlight localizations and skips already attached group builds", async () => {
     const calls: string[] = [];
     const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
@@ -621,6 +676,185 @@ describe("TestFlight request execution", () => {
       "GET /v1/betaGroups/group-1/relationships/builds",
       "GET /v1/builds/build-123/betaBuildLocalizations",
       'PATCH /v1/betaBuildLocalizations/build-loc-1 {"data":{"type":"betaBuildLocalizations","id":"build-loc-1","attributes":{"whatsNew":"Internal dogfood."}}}'
+    ]);
+  });
+
+  it("keeps beta app localization creates when no existing localization can be resolved", async () => {
+    const calls: string[] = [];
+    const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async (path: string) => {
+        calls.push(`GET ${path}`);
+        if (path === "/v1/apps/app-123/betaAppLocalizations") {
+          return {
+            data: [
+              {
+                type: "betaAppLocalizations",
+                id: "app-loc-fr",
+                attributes: { locale: "fr-FR" }
+              }
+            ]
+          };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      },
+      request: async (input) => {
+        calls.push(`${input.method} ${input.path} ${JSON.stringify(input.body)}`);
+        return { ok: true };
+      }
+    };
+
+    await expect(
+      executeTestFlightRequests({
+        client,
+        requests: [
+          {
+            method: "POST",
+            path: "/v1/betaAppLocalizations",
+            body: {
+              data: {
+                type: "betaAppLocalizations",
+                attributes: { locale: "en-US", description: "No app relationship yet." }
+              }
+            }
+          },
+          {
+            method: "POST",
+            path: "/v1/betaAppLocalizations",
+            body: {
+              data: {
+                type: "betaAppLocalizations",
+                attributes: { locale: "en-US", description: "No matching locale yet." },
+                relationships: { app: { data: { type: "apps", id: "app-123" } } }
+              }
+            }
+          }
+        ]
+      })
+    ).resolves.toEqual({ ok: true, results: [{ ok: true }, { ok: true }] });
+    expect(calls).toEqual([
+      'POST /v1/betaAppLocalizations {"data":{"type":"betaAppLocalizations","attributes":{"locale":"en-US","description":"No app relationship yet."}}}',
+      "GET /v1/apps/app-123/betaAppLocalizations",
+      'POST /v1/betaAppLocalizations {"data":{"type":"betaAppLocalizations","attributes":{"locale":"en-US","description":"No matching locale yet."},"relationships":{"app":{"data":{"type":"apps","id":"app-123"}}}}}'
+    ]);
+  });
+
+  it("keeps beta build localization creates when no existing localization can be resolved", async () => {
+    const calls: string[] = [];
+    const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async (path: string) => {
+        calls.push(`GET ${path}`);
+        if (path === "/v1/builds/build-123/betaBuildLocalizations") {
+          return {
+            data: [
+              {
+                type: "betaBuildLocalizations",
+                id: "build-loc-fr",
+                attributes: { locale: "fr-FR" }
+              }
+            ]
+          };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      },
+      request: async (input) => {
+        calls.push(`${input.method} ${input.path} ${JSON.stringify(input.body)}`);
+        return { ok: true };
+      }
+    };
+
+    await expect(
+      executeTestFlightRequests({
+        client,
+        requests: [
+          {
+            method: "POST",
+            path: "/v1/betaBuildLocalizations",
+            body: {
+              data: {
+                type: "betaBuildLocalizations",
+                attributes: { locale: "en-US", whatsNew: "No build relationship yet." }
+              }
+            }
+          },
+          {
+            method: "POST",
+            path: "/v1/betaBuildLocalizations",
+            body: {
+              data: {
+                type: "betaBuildLocalizations",
+                attributes: { locale: "en-US", whatsNew: "No matching locale yet." },
+                relationships: { build: { data: { type: "builds", id: "build-123" } } }
+              }
+            }
+          }
+        ]
+      })
+    ).resolves.toEqual({ ok: true, results: [{ ok: true }, { ok: true }] });
+    expect(calls).toEqual([
+      'POST /v1/betaBuildLocalizations {"data":{"type":"betaBuildLocalizations","attributes":{"locale":"en-US","whatsNew":"No build relationship yet."}}}',
+      "GET /v1/builds/build-123/betaBuildLocalizations",
+      'POST /v1/betaBuildLocalizations {"data":{"type":"betaBuildLocalizations","attributes":{"locale":"en-US","whatsNew":"No matching locale yet."},"relationships":{"build":{"data":{"type":"builds","id":"build-123"}}}}}'
+    ]);
+  });
+
+  it("executes beta group build relationship requests when only some attachments are idempotent", async () => {
+    const calls: string[] = [];
+    const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async (path: string) => {
+        calls.push(`GET ${path}`);
+        if (path === "/v1/betaGroups/group-empty/relationships/builds") {
+          return { data: [] };
+        }
+        if (path === "/v1/betaGroups/group-mixed/relationships/builds") {
+          return { data: [{ type: "builds", id: "build-already-attached" }] };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      },
+      request: async (input) => {
+        calls.push(`${input.method} ${input.path} ${JSON.stringify(input.body)}`);
+        return { ok: true };
+      }
+    };
+
+    await expect(
+      executeTestFlightRequests({
+        client,
+        requests: [
+          {
+            method: "POST",
+            path: "/v1/betaGroups/group-invalid/relationships/builds",
+            body: { data: { type: "builds", id: "build-object-not-array" } }
+          },
+          {
+            method: "POST",
+            path: "/v1/betaGroups/group-invalid/relationships/builds",
+            body: { data: [{ type: "builds", id: "" }, { type: "builds" }] }
+          },
+          {
+            method: "POST",
+            path: "/v1/betaGroups/group-empty/relationships/builds",
+            body: { data: [{ type: "builds", id: "build-new" }] }
+          },
+          {
+            method: "POST",
+            path: "/v1/betaGroups/group-mixed/relationships/builds",
+            body: {
+              data: [
+                { type: "builds", id: "build-already-attached" },
+                { type: "builds", id: "build-missing" }
+              ]
+            }
+          }
+        ]
+      })
+    ).resolves.toEqual({ ok: true, results: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }] });
+    expect(calls).toEqual([
+      'POST /v1/betaGroups/group-invalid/relationships/builds {"data":{"type":"builds","id":"build-object-not-array"}}',
+      'POST /v1/betaGroups/group-invalid/relationships/builds {"data":[{"type":"builds","id":""},{"type":"builds"}]}',
+      "GET /v1/betaGroups/group-empty/relationships/builds",
+      'POST /v1/betaGroups/group-empty/relationships/builds {"data":[{"type":"builds","id":"build-new"}]}',
+      "GET /v1/betaGroups/group-mixed/relationships/builds",
+      'POST /v1/betaGroups/group-mixed/relationships/builds {"data":[{"type":"builds","id":"build-missing"}]}'
     ]);
   });
 
@@ -736,6 +970,99 @@ describe("TestFlight request execution", () => {
       status: 409,
       code: "STATE_ERROR"
     });
+  });
+
+  it("does not swallow TestFlight notification conflicts without a verifiable build beta detail", async () => {
+    const missingBuildClient: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async () => {
+        throw new Error("unexpected GET");
+      },
+      request: async () => {
+        throw new AppStoreConnectError({
+          status: 409,
+          code: "STATE_ERROR",
+          message: "There is a problem with the request entity",
+          retryable: true
+        });
+      }
+    };
+    await expect(
+      executeTestFlightRequests({
+        client: missingBuildClient,
+        requests: [
+          {
+            method: "POST",
+            path: "/v1/buildBetaNotifications",
+            body: { data: { type: "buildBetaNotifications" } }
+          }
+        ]
+      })
+    ).rejects.toMatchObject({ name: "AppStoreConnectError", status: 409 });
+
+    const failedLookupClient: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async () => {
+        throw new AppStoreConnectError({
+          status: 404,
+          code: "NOT_FOUND",
+          message: "Build beta detail not found",
+          retryable: false
+        });
+      },
+      request: async () => {
+        throw new AppStoreConnectError({
+          status: 409,
+          code: "STATE_ERROR",
+          message: "There is a problem with the request entity",
+          retryable: true
+        });
+      }
+    };
+    await expect(
+      executeTestFlightRequests({
+        client: failedLookupClient,
+        requests: [
+          {
+            method: "POST",
+            path: "/v1/buildBetaNotifications",
+            body: {
+              data: {
+                type: "buildBetaNotifications",
+                relationships: { build: { data: { type: "builds", id: "build-123" } } }
+              }
+            }
+          }
+        ]
+      })
+    ).rejects.toMatchObject({ name: "AppStoreConnectError", status: 409 });
+  });
+
+  it("does not treat unrelated App Store Connect conflicts as TestFlight notification idempotency", async () => {
+    const client: Parameters<typeof executeTestFlightRequests>[0]["client"] = {
+      get: async () => {
+        throw new Error("unexpected GET");
+      },
+      request: async () => {
+        throw new AppStoreConnectError({
+          status: 409,
+          code: "STATE_ERROR",
+          message: "There is a problem with the request entity",
+          retryable: true
+        });
+      }
+    };
+
+    await expect(
+      executeTestFlightRequests({
+        client,
+        requests: [
+          {
+            method: "POST",
+            path: "/v1/betaBuildLocalizations",
+            body: { data: { type: "betaBuildLocalizations" } }
+          }
+        ]
+      })
+    ).rejects.toMatchObject({ name: "AppStoreConnectError", status: 409 });
   });
 
   it("publishes requests from an on-disk ASC config", async () => {
