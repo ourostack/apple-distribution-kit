@@ -63,7 +63,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 **Output**: Baseline evidence files under `./2026-08-22-0508-doing-dependency-audit-refresh/`.
 **Acceptance**: Evidence reproduces exactly three high advisories, identifies every affected lockfile path, and records `package.json` and expected checksum invariants.
 
-### ⬜ Unit 1a: CI Audit Gate — Test
+### ✅ Unit 1a: CI Audit Gate — Test
 **What**: Add `test/ci-workflow.test.ts` that reads `.github/workflows/ci.yml` and asserts exactly one `npm audit --audit-level=moderate` command occurs after `npm ci` and before build/coverage commands.
 **Output**: A focused workflow contract test and saved red test output.
 **Acceptance**: The focused test exists and fails against the current workflow for the missing audit command.
@@ -143,3 +143,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - 2026-08-22 05:21 Quality pass repaired task-document continuity, red-unit execution rules, initial-commit metadata, and explicit template criteria
 - 2026-08-22 05:29 Review chain converged: granularity, validation, ambiguity, quality, and two consecutive scrutiny framings
 - 2026-08-22 05:30 Unit 0 complete: captured pinned SHA, manifest hash, dependency tree, checksum contract, and exact three-high audit failure
+- 2026-08-22 05:31 Unit 1a complete: workflow contract test fails specifically because the audit step is absent
