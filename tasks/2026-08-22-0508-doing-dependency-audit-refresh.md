@@ -58,7 +58,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 ### Legend
 ⬜ Not started · 🔄 In progress · ✅ Done · ❌ Blocked
 
-### ⬜ Unit 0: Capture Baseline and Safety Invariants
+### ✅ Unit 0: Capture Baseline and Safety Invariants
 **What**: Record the pinned commit, `package.json` SHA-256, current lockfile dependency paths for `brace-expansion`, `nanoid`, and `postcss`, failing audit JSON, and current `dist` contract checksum in the artifacts directory. Confirm the worktree is clean except for task documents before implementation.
 **Output**: Baseline evidence files under `./2026-08-22-0508-doing-dependency-audit-refresh/`.
 **Acceptance**: Evidence reproduces exactly three high advisories, identifies every affected lockfile path, and records `package.json` and expected checksum invariants.
@@ -142,3 +142,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - 2026-08-22 05:19 Ambiguity review converged
 - 2026-08-22 05:21 Quality pass repaired task-document continuity, red-unit execution rules, initial-commit metadata, and explicit template criteria
 - 2026-08-22 05:29 Review chain converged: granularity, validation, ambiguity, quality, and two consecutive scrutiny framings
+- 2026-08-22 05:30 Unit 0 complete: captured pinned SHA, manifest hash, dependency tree, checksum contract, and exact three-high audit failure
