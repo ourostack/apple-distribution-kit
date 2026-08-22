@@ -2,7 +2,7 @@
 
 **Status**: drafting
 **Execution Mode**: direct
-**Created**: 2026-08-22 05:08
+**Created**: 2026-08-22 05:14
 **Planning**: ./2026-08-22-0508-planning-dependency-audit-refresh.md
 **Artifacts**: ./2026-08-22-0508-doing-dependency-audit-refresh/
 
@@ -29,12 +29,18 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - [ ] `package.json` remains byte-identical, and every lockfile change maps to one of the three vulnerable dependency paths with no unrelated churn.
 - [ ] A cold reviewer finds no blocker, major, or actionable minor issue.
 - [ ] The focused PR passes CI and merges; its exact merge SHA and checksum are reported.
+- [ ] 100% test coverage on all new code.
+- [ ] All tests pass.
+- [ ] No warnings.
+- [ ] Visual QA is not applicable because no UI, rendering, or layout changes are in scope.
 
 ## Code Coverage Requirements
 
 **MANDATORY: 100% coverage on all new code.**
-- No coverage exclusions on new code.
-- All branches and error paths covered.
+- No `[ExcludeFromCodeCoverage]` or equivalent on new code.
+- All branches covered (if/else, switch, try/catch).
+- All error paths tested.
+- Edge cases: null, empty, boundary values.
 - No product code is expected to change; existing coverage must remain green.
 
 ## TDD Requirements
@@ -93,7 +99,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 **Acceptance**: The frozen install and every audit, static-analysis, test, coverage, and build command pass with no warnings.
 
 ### ⬜ Unit 3b: Independent Distribution Verification
-**What**: After all implementation, validation, and task-document working commits, remove the task documents from the final product diff, commit that removal, and record that commit as `CANDIDATE_SHA`. Create two detached disposable worktrees with `git worktree add --detach <temp-path> "$CANDIDATE_SHA"`; in each repeat frozen install, audit, and build. Compute `find dist -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}'`, compare file lists, then remove each with `git worktree remove <temp-path>`.
+**What**: After all implementation and validation commits, copy both task documents to the local-only artifact directory as the authoritative continuation copies, add that directory to the worktree's `.git/info/exclude`, then remove the tracked task documents from the final product diff and commit that removal. Continue status/checklist/progress updates only in the authoritative local copies. Record the resulting commit as `CANDIDATE_SHA`. Create two detached disposable worktrees with `git worktree add --detach <temp-path> "$CANDIDATE_SHA"`; in each repeat frozen install, audit, and build. Compute `find dist -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}'`, compare file lists, then remove each with `git worktree remove <temp-path>`.
 **Output**: Two clean-build logs, file lists, and checksums in the artifacts directory.
 **Acceptance**: Both builds pass; checksums equal one another and `9f64507b03a5dc76a6ebc52f88cddf71f9448a8e532e4758951d2d31309d5a45`. If not, stop and produce a byte-level `dist` diff for reviewer disposition.
 
@@ -115,8 +121,8 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 ## Execution
 - **TDD strictly enforced**: tests → red → implement → green → refactor
 - Commit after each phase (1a, 1b, 1c)
-- Push after each unit complete
-- Run full test suite before marking unit done
+- Push after each green unit completes; retain an intentionally red Unit 1a commit locally and push it only together with the green Unit 1b commit.
+- Run the full passing suite before marking implementation/verification units done. Units 1a and 2a are explicit red-contract exceptions whose acceptance requires the documented expected failure, not a green suite.
 - For UI/rendering/layout units, run `visual-qa-dogfood` before declaring the unit or task complete
 - **All artifacts**: Save outputs, logs, and data to the local-only `./2026-08-22-0508-doing-dependency-audit-refresh/` directory. Do not stage or force-add any artifact; verify the directory and task documents are absent from the final PR diff.
 - **Warning policy**: `npm ci --loglevel=error`, audit, typecheck, test, coverage, and build must exit zero and emit no lines explicitly labeled `WARN` or `warning`. Ordinary npm package/funding summaries are informational, not warnings.
@@ -127,3 +133,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - 2026-08-22 05:08 Created from planning doc
 - 2026-08-22 05:15 Granularity pass addressed explicit-output, lifecycle-splitting, and baseline-ownership findings
 - 2026-08-22 05:19 Ambiguity pass fixed the mutation algorithm, artifact policy, candidate freeze/review loop, PR scope, merge strategy, and warning definition
+- 2026-08-22 05:22 Quality pass repaired task-document continuity, red-unit execution rules, initial-commit metadata, and explicit template criteria
