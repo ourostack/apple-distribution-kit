@@ -78,7 +78,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 **Output**: Coverage output demonstrating the repository remains at 100% and a final focused test file.
 **Acceptance**: Existing coverage thresholds remain at 100%, the full suite stays green, and the CI contract test remains readable and deterministic.
 
-### ⬜ Unit 2a: Dependency Repair — Failing Contract
+### ✅ Unit 2a: Dependency Repair — Failing Contract
 **What**: Verify Unit 0's immutable baseline audit and dependency-tree artifacts correspond to the pinned source and explicitly treat their non-zero audit result as the red dependency contract.
 **Output**: A dependency-repair red-contract note referencing the exact Unit 0 artifacts and pinned commit.
 **Acceptance**: The referenced evidence fails specifically on the three known high advisories and identifies every vulnerable path.
@@ -146,3 +146,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - 2026-08-22 05:31 Unit 1a complete: workflow contract test fails specifically because the audit step is absent
 - 2026-08-22 05:32 Unit 1b complete: audit gate added after frozen install; focused and all 186 tests plus build pass
 - 2026-08-22 05:32 Unit 1c complete: 186 tests pass with 100% statements, branches, functions, and lines; build clean
+- 2026-08-22 05:33 Unit 2a complete: immutable baseline evidence establishes the exact three-high red dependency contract
