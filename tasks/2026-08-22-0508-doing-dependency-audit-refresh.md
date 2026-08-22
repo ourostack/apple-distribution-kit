@@ -24,15 +24,15 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 
 - [x] `npm ci --loglevel=error` succeeds from the committed lockfile.
 - [x] `npm audit --audit-level=moderate` reports zero vulnerabilities.
-- [ ] Typecheck, full tests, coverage, and build pass with 100% coverage and no warnings.
+- [x] Typecheck, full tests, coverage, and build pass with 100% coverage and no warnings.
 - [ ] Two independently clean builds using Spoonjoy's exact aggregate checksum command match each other and the current contract checksum `9f64507b03a5dc76a6ebc52f88cddf71f9448a8e532e4758951d2d31309d5a45`. A checksum change is allowed only as an explicit reviewed exception backed by a byte-level `dist` diff and rationale.
 - [x] `package.json` remains byte-identical, and every lockfile change maps to one of the three vulnerable dependency paths with no unrelated churn.
 - [ ] A cold reviewer finds no blocker, major, or actionable minor issue.
 - [ ] The focused PR passes CI and merges; its exact merge SHA and checksum are reported.
-- [ ] 100% test coverage on all new code.
-- [ ] All tests pass.
-- [ ] No warnings.
-- [ ] Visual QA is not applicable because no UI, rendering, or layout changes are in scope.
+- [x] 100% test coverage on all new code.
+- [x] All tests pass.
+- [x] No warnings.
+- [x] Visual QA is not applicable because no UI, rendering, or layout changes are in scope.
 
 ## Code Coverage Requirements
 
@@ -88,7 +88,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 **Output**: A focused `package-lock.json` diff and a lockfile-delta mapping artifact.
 **Acceptance**: `npm ci --loglevel=error` succeeds, `npm audit --audit-level=moderate` exits zero, `package.json` SHA-256 is unchanged, and an artifact maps every lockfile delta to a known advisory path.
 
-### ⬜ Unit 2c: Dependency Repair — Verification
+### ✅ Unit 2c: Dependency Repair — Verification
 **What**: Run `npm ls brace-expansion nanoid postcss`, typecheck, tests, and coverage from the repaired frozen install; save audit and dependency-tree evidence.
 **Output**: Post-repair audit, dependency-tree, typecheck, test, and coverage logs.
 **Acceptance**: All commands pass, no vulnerable version remains in the installed tree, all tests pass, and coverage remains 100% with no warnings.
@@ -148,3 +148,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - 2026-08-22 05:32 Unit 1c complete: 186 tests pass with 100% statements, branches, functions, and lines; build clean
 - 2026-08-22 05:33 Unit 2a complete: immutable baseline evidence establishes the exact three-high red dependency contract
 - 2026-08-22 05:34 Unit 2b complete: exactly four permitted transitive lock entries updated; manifest unchanged; frozen install and zero-vulnerability audit pass
+- 2026-08-22 05:34 Unit 2c complete: patched dependency tree, zero audit findings, typecheck, 186 tests, 100% coverage, and build all pass
