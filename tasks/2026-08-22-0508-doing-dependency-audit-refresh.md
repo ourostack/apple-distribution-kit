@@ -68,7 +68,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 **Output**: A focused workflow contract test and saved red test output.
 **Acceptance**: The focused test exists and fails against the current workflow for the missing audit command.
 
-### ⬜ Unit 1b: CI Audit Gate — Implementation
+### ✅ Unit 1b: CI Audit Gate — Implementation
 **What**: Add `- run: npm audit --audit-level=moderate` immediately after `- run: npm ci` in `.github/workflows/ci.yml`.
 **Output**: The minimal workflow change and saved green focused-test output.
 **Acceptance**: The focused test and full test suite pass with no warnings; no unrelated workflow behavior changes.
@@ -144,3 +144,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - 2026-08-22 05:29 Review chain converged: granularity, validation, ambiguity, quality, and two consecutive scrutiny framings
 - 2026-08-22 05:30 Unit 0 complete: captured pinned SHA, manifest hash, dependency tree, checksum contract, and exact three-high audit failure
 - 2026-08-22 05:31 Unit 1a complete: workflow contract test fails specifically because the audit step is absent
+- 2026-08-22 05:32 Unit 1b complete: audit gate added after frozen install; focused and all 186 tests plus build pass
