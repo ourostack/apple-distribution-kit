@@ -98,7 +98,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 **Output**: A candidate validation log covering every required command.
 **Acceptance**: The frozen install and every audit, static-analysis, test, coverage, and build command pass with no warnings.
 
-### ⬜ Unit 3b: Documentation Freeze and Candidate Commit
+### ✅ Unit 3b: Documentation Freeze and Candidate Commit
 **What**: After all implementation and validation commits, copy both task documents to the local-only artifact directory as the authoritative continuation copies. Resolve the shared repository exclude file with `git rev-parse --git-path info/exclude`, add the artifact directory there, then remove the tracked task documents from the final product diff and commit that removal. Continue status/checklist/progress updates only in the authoritative local copies. Record the resulting commit as `CANDIDATE_SHA`.
 **Output**: Authoritative local task copies, a product-only candidate diff, and recorded `CANDIDATE_SHA`.
 **Acceptance**: The local copies are excluded via the resolved repository-local/shared exclude path, the tracked task documents are absent from the final diff, and the candidate contains only planned product/test files.
@@ -150,3 +150,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - 2026-08-22 05:34 Unit 2b complete: exactly four permitted transitive lock entries updated; manifest unchanged; frozen install and zero-vulnerability audit pass
 - 2026-08-22 05:34 Unit 2c complete: patched dependency tree, zero audit findings, typecheck, 186 tests, 100% coverage, and build all pass
 - 2026-08-22 05:35 Unit 3a complete: fresh frozen install, audit, typecheck, tests, coverage, and build all pass without warnings
+- 2026-08-22 05:35 Unit 3b complete: authoritative local task copies frozen and product-only candidate prepared
