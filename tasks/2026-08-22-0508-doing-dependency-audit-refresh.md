@@ -98,13 +98,18 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 **Output**: A candidate validation log covering every required command.
 **Acceptance**: The frozen install and every audit, static-analysis, test, coverage, and build command pass with no warnings.
 
-### ⬜ Unit 3b: Independent Distribution Verification
-**What**: After all implementation and validation commits, copy both task documents to the local-only artifact directory as the authoritative continuation copies, add that directory to the worktree's `.git/info/exclude`, then remove the tracked task documents from the final product diff and commit that removal. Continue status/checklist/progress updates only in the authoritative local copies. Record the resulting commit as `CANDIDATE_SHA`. Create two detached disposable worktrees with `git worktree add --detach <temp-path> "$CANDIDATE_SHA"`; in each repeat frozen install, audit, and build. Compute `find dist -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}'`, compare file lists, then remove each with `git worktree remove <temp-path>`.
+### ⬜ Unit 3b: Documentation Freeze and Candidate Commit
+**What**: After all implementation and validation commits, copy both task documents to the local-only artifact directory as the authoritative continuation copies. Resolve the shared repository exclude file with `git rev-parse --git-path info/exclude`, add the artifact directory there, then remove the tracked task documents from the final product diff and commit that removal. Continue status/checklist/progress updates only in the authoritative local copies. Record the resulting commit as `CANDIDATE_SHA`.
+**Output**: Authoritative local task copies, a product-only candidate diff, and recorded `CANDIDATE_SHA`.
+**Acceptance**: The local copies are excluded via the resolved repository-local/shared exclude path, the tracked task documents are absent from the final diff, and the candidate contains only planned product/test files.
+
+### ⬜ Unit 3c: Independent Distribution Verification
+**What**: Create two detached disposable worktrees with `git worktree add --detach <temp-path> "$CANDIDATE_SHA"`; in each repeat frozen install, audit, and build. Compute `find dist -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}'`, compare file lists, then remove each with `git worktree remove <temp-path>`.
 **Output**: Two clean-build logs, file lists, and checksums in the artifacts directory.
 **Acceptance**: Both builds pass; checksums equal one another and `9f64507b03a5dc76a6ebc52f88cddf71f9448a8e532e4758951d2d31309d5a45`. If not, stop and produce a byte-level `dist` diff for reviewer disposition.
 
 ### ⬜ Unit 4a: Cold Review and Remediation
-**What**: Request a fresh cold review of the complete diff and validation artifacts that explicitly names `CANDIDATE_SHA`. If remediation is required, commit it, designate the new head as `CANDIDATE_SHA`, rerun Units 3a–3b, and request another fresh review. Repeat until a reviewer converges on the final unchanged head.
+**What**: Request a fresh cold review of the complete diff and validation artifacts that explicitly names `CANDIDATE_SHA`. If remediation is required, commit it, designate the new head as `CANDIDATE_SHA`, rerun Units 3a and 3c, and request another fresh review. Repeat until a reviewer converges on the final unchanged head.
 **Output**: A converged cold-review verdict for the exact candidate head.
 **Acceptance**: The reviewer reports no blocker, major, or actionable minor finding and all validation remains green after remediation.
 
@@ -130,7 +135,9 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - **Decisions made**: Update docs immediately, commit right away
 
 ## Progress Log
-- 2026-08-22 05:08 Created from planning doc
+- 2026-08-22 05:14 Created from planning doc
 - 2026-08-22 05:15 Granularity pass addressed explicit-output, lifecycle-splitting, and baseline-ownership findings
-- 2026-08-22 05:19 Ambiguity pass fixed the mutation algorithm, artifact policy, candidate freeze/review loop, PR scope, merge strategy, and warning definition
-- 2026-08-22 05:22 Quality pass repaired task-document continuity, red-unit execution rules, initial-commit metadata, and explicit template criteria
+- 2026-08-22 05:16 Validation pass converged with all cited repository facts confirmed
+- 2026-08-22 05:18 Ambiguity pass fixed the mutation algorithm, artifact policy, candidate freeze/review loop, PR scope, merge strategy, and warning definition
+- 2026-08-22 05:19 Ambiguity review converged
+- 2026-08-22 05:21 Quality pass repaired task-document continuity, red-unit execution rules, initial-commit metadata, and explicit template criteria
