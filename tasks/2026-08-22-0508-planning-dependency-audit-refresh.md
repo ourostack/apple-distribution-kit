@@ -8,6 +8,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 
 - Reproduce the `brace-expansion`, `nanoid`, and `postcss` audit failures at pinned source `4f3dd7bee99bae5b8e6807b5e0c94ed01cda52eb`.
 - Apply the smallest compatible dependency/lockfile refresh that makes `npm audit --audit-level=moderate` pass.
+- Add the same audit command to repository CI immediately after frozen install.
 - Run frozen install, audit, typecheck, tests, coverage, build, and deterministic `dist` checksum verification.
 - Open, review, merge, and report the exact merged SHA and expected checksum for downstream pinning.
 
@@ -22,7 +23,8 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - `npm ci --loglevel=error` succeeds from the committed lockfile.
 - `npm audit --audit-level=moderate` reports zero vulnerabilities.
 - Typecheck, full tests, coverage, and build pass.
-- Two clean builds produce the same aggregate `dist` SHA-256.
+- Two independently clean builds using Spoonjoy's exact aggregate checksum command match each other and the current contract checksum `9f64507b03a5dc76a6ebc52f88cddf71f9448a8e532e4758951d2d31309d5a45`. A checksum change is allowed only as an explicit reviewed exception backed by a byte-level `dist` diff and rationale.
+- `package.json` remains byte-identical, and every lockfile change maps to one of the three vulnerable dependency paths with no unrelated churn.
 - A cold reviewer finds no blocker, major, or actionable minor issue.
 - The focused PR passes CI and merges; its exact merge SHA and checksum are reported.
 
@@ -37,8 +39,10 @@ None. The failing packages all advertise compatible audit fixes, so lockfile-onl
 # Decisions Made
 
 - Preserve the package manifest and runtime behavior if `npm audit fix --package-lock-only` resolves all advisories.
+- Reject broad lockfile updater output: review every changed package/version and retain only changes required along the vulnerable `brace-expansion`, `nanoid`, and `postcss` paths.
 - Do not use `--force`, overrides, audit allowlists, or ignored findings.
 - Treat the aggregate checksum command in Spoonjoy's workflow as the downstream contract.
+- Enforce `npm audit --audit-level=moderate` in `.github/workflows/ci.yml` after `npm ci` so the repaired prerequisite cannot immediately regress.
 
 # Context / References
 
@@ -53,3 +57,4 @@ Dedicated worktree: `~/Projects/apple-distribution-kit-audit-refresh`; branch: `
 # Progress Log
 
 - 2026-08-22 05:08 Reproduced the exact three-high audit failure and drafted the minimal repair plan.
+- 2026-08-22 05:10 Addressed cold-review findings by pinning byte-identical distribution output, bounded lockfile evidence, and repository CI audit enforcement.
