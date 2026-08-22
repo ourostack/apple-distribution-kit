@@ -93,7 +93,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 **Output**: Post-repair audit, dependency-tree, typecheck, test, and coverage logs.
 **Acceptance**: All commands pass, no vulnerable version remains in the installed tree, all tests pass, and coverage remains 100% with no warnings.
 
-### ⬜ Unit 3a: Candidate Validation
+### ✅ Unit 3a: Candidate Validation
 **What**: From the candidate worktree, run `npm ci --loglevel=error`, `npm audit --audit-level=moderate`, `npm run typecheck`, `npm test`, `npm run coverage`, and `npm run build`.
 **Output**: A candidate validation log covering every required command.
 **Acceptance**: The frozen install and every audit, static-analysis, test, coverage, and build command pass with no warnings.
@@ -149,3 +149,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - 2026-08-22 05:33 Unit 2a complete: immutable baseline evidence establishes the exact three-high red dependency contract
 - 2026-08-22 05:34 Unit 2b complete: exactly four permitted transitive lock entries updated; manifest unchanged; frozen install and zero-vulnerability audit pass
 - 2026-08-22 05:34 Unit 2c complete: patched dependency tree, zero audit findings, typecheck, 186 tests, 100% coverage, and build all pass
+- 2026-08-22 05:35 Unit 3a complete: fresh frozen install, audit, typecheck, tests, coverage, and build all pass without warnings
