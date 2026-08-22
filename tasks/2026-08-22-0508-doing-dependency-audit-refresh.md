@@ -59,37 +59,58 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 
 ### ⬜ Unit 1a: CI Audit Gate — Test
 **What**: Add `test/ci-workflow.test.ts` that reads `.github/workflows/ci.yml` and asserts exactly one `npm audit --audit-level=moderate` command occurs after `npm ci` and before build/coverage commands.
+**Output**: A focused workflow contract test and saved red test output.
 **Acceptance**: The focused test exists and fails against the current workflow for the missing audit command.
 
 ### ⬜ Unit 1b: CI Audit Gate — Implementation
 **What**: Add `- run: npm audit --audit-level=moderate` immediately after `- run: npm ci` in `.github/workflows/ci.yml`.
+**Output**: The minimal workflow change and saved green focused-test output.
 **Acceptance**: The focused test and full test suite pass with no warnings; no unrelated workflow behavior changes.
 
 ### ⬜ Unit 1c: CI Audit Gate — Coverage and Refactor
 **What**: Run coverage, confirm the new test introduces no uncovered executable code, and simplify only if needed while keeping the assertion exact.
+**Output**: Coverage output demonstrating the repository remains at 100% and a final focused test file.
 **Acceptance**: Existing coverage thresholds remain at 100%, the full suite stays green, and the CI contract test remains readable and deterministic.
 
 ### ⬜ Unit 2a: Dependency Repair — Failing Contract
-**What**: From a frozen install at the committed baseline, run `npm audit --audit-level=moderate` and save its non-zero output. Record `npm ls brace-expansion nanoid postcss` so the repair is bounded to the demonstrated vulnerable paths.
-**Acceptance**: The command fails specifically on the three known high advisories, establishing the red dependency contract.
+**What**: Verify Unit 0's immutable baseline audit and dependency-tree artifacts correspond to the pinned source and explicitly treat their non-zero audit result as the red dependency contract.
+**Output**: A dependency-repair red-contract note referencing the exact Unit 0 artifacts and pinned commit.
+**Acceptance**: The referenced evidence fails specifically on the three known high advisories and identifies every vulnerable path.
 
 ### ⬜ Unit 2b: Dependency Repair — Minimal Lockfile Update
 **What**: Run the narrowest package-lock-only audit repair. Review `package-lock.json` line-by-line, retain only patched compatible versions required along the three affected paths, and do not change `package.json`.
+**Output**: A focused `package-lock.json` diff and a lockfile-delta mapping artifact.
 **Acceptance**: `npm ci --loglevel=error` succeeds, `npm audit --audit-level=moderate` exits zero, `package.json` SHA-256 is unchanged, and an artifact maps every lockfile delta to a known advisory path.
 
 ### ⬜ Unit 2c: Dependency Repair — Verification
 **What**: Run `npm ls brace-expansion nanoid postcss`, typecheck, tests, and coverage from the repaired frozen install; save audit and dependency-tree evidence.
+**Output**: Post-repair audit, dependency-tree, typecheck, test, and coverage logs.
 **Acceptance**: All commands pass, no vulnerable version remains in the installed tree, all tests pass, and coverage remains 100% with no warnings.
 
-### ⬜ Unit 3: Independent Build and Distribution Verification
-**What**: In two disposable clean checkouts of the exact candidate commit, run `npm ci --loglevel=error`, `npm audit --audit-level=moderate`, `npm run typecheck`, `npm test`, `npm run coverage`, and `npm run build`. In each checkout compute `find dist -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}'`, compare file lists, and save both checksums.
-**Output**: Two clean-build validation logs and checksums in the artifacts directory.
-**Acceptance**: Both full validation runs pass; checksums equal one another and `9f64507b03a5dc76a6ebc52f88cddf71f9448a8e532e4758951d2d31309d5a45`. If not, stop and produce a byte-level `dist` diff for reviewer disposition.
+### ⬜ Unit 3a: Candidate Validation
+**What**: From the candidate worktree, run `npm ci --loglevel=error`, `npm audit --audit-level=moderate`, `npm run typecheck`, `npm test`, `npm run coverage`, and `npm run build`.
+**Output**: A candidate validation log covering every required command.
+**Acceptance**: The frozen install and every audit, static-analysis, test, coverage, and build command pass with no warnings.
 
-### ⬜ Unit 4: Cold Review, Pull Request, CI, and Merge
-**What**: Request a fresh cold review of the complete diff and validation artifacts. Address all blocker, major, and actionable minor findings, push atomic commits, open a focused pull request, monitor required CI to success, and merge using repository policy.
-**Output**: Merged pull request, exact merge SHA, and final verified distribution checksum.
-**Acceptance**: Cold review converges, CI passes on the reviewed head, the pull request is merged, and the exact merged SHA plus checksum are reported for Spoonjoy pinning without editing Spoonjoy.
+### ⬜ Unit 3b: Independent Distribution Verification
+**What**: In two disposable clean checkouts of the exact candidate commit, repeat frozen install, audit, and build. In each checkout compute `find dist -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}'`, compare file lists, and save both checksums.
+**Output**: Two clean-build logs, file lists, and checksums in the artifacts directory.
+**Acceptance**: Both builds pass; checksums equal one another and `9f64507b03a5dc76a6ebc52f88cddf71f9448a8e532e4758951d2d31309d5a45`. If not, stop and produce a byte-level `dist` diff for reviewer disposition.
+
+### ⬜ Unit 4a: Cold Review and Remediation
+**What**: Request a fresh cold review of the complete diff and validation artifacts, then address all blocker, major, and actionable minor findings.
+**Output**: A converged cold-review verdict for the exact candidate head.
+**Acceptance**: The reviewer reports no blocker, major, or actionable minor finding and all validation remains green after remediation.
+
+### ⬜ Unit 4b: Pull Request and CI
+**What**: Push the final atomic commits, open a focused pull request, and monitor required CI on the reviewed head to completion.
+**Output**: A focused pull request whose required checks pass on the reviewed head SHA.
+**Acceptance**: The pull request contains only the planned changes and every required check passes for the exact reviewed head.
+
+### ⬜ Unit 4c: Merge and Downstream Handoff
+**What**: Merge using repository policy, resolve the exact merge commit SHA, and report it with the final verified checksum for the native agent to pin.
+**Output**: Merged pull request, exact merge SHA, and verified distribution checksum.
+**Acceptance**: The pull request is merged and the exact SHA plus checksum are reported without editing Spoonjoy.
 
 ## Execution
 - **TDD strictly enforced**: tests → red → implement → green → refactor
@@ -103,3 +124,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 
 ## Progress Log
 - 2026-08-22 05:08 Created from planning doc
+- 2026-08-22 05:15 Granularity pass addressed explicit-output, lifecycle-splitting, and baseline-ownership findings
