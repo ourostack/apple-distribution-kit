@@ -22,11 +22,11 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 
 ## Completion Criteria
 
-- [ ] `npm ci --loglevel=error` succeeds from the committed lockfile.
-- [ ] `npm audit --audit-level=moderate` reports zero vulnerabilities.
+- [x] `npm ci --loglevel=error` succeeds from the committed lockfile.
+- [x] `npm audit --audit-level=moderate` reports zero vulnerabilities.
 - [ ] Typecheck, full tests, coverage, and build pass with 100% coverage and no warnings.
 - [ ] Two independently clean builds using Spoonjoy's exact aggregate checksum command match each other and the current contract checksum `9f64507b03a5dc76a6ebc52f88cddf71f9448a8e532e4758951d2d31309d5a45`. A checksum change is allowed only as an explicit reviewed exception backed by a byte-level `dist` diff and rationale.
-- [ ] `package.json` remains byte-identical, and every lockfile change maps to one of the three vulnerable dependency paths with no unrelated churn.
+- [x] `package.json` remains byte-identical, and every lockfile change maps to one of the three vulnerable dependency paths with no unrelated churn.
 - [ ] A cold reviewer finds no blocker, major, or actionable minor issue.
 - [ ] The focused PR passes CI and merges; its exact merge SHA and checksum are reported.
 - [ ] 100% test coverage on all new code.
@@ -83,7 +83,7 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 **Output**: A dependency-repair red-contract note referencing the exact Unit 0 artifacts and pinned commit.
 **Acceptance**: The referenced evidence fails specifically on the three known high advisories and identifies every vulnerable path.
 
-### ⬜ Unit 2b: Dependency Repair — Minimal Lockfile Update
+### ✅ Unit 2b: Dependency Repair — Minimal Lockfile Update
 **What**: Run `npm audit fix --package-lock-only --ignore-scripts --loglevel=error`. Accept only these lock entries and associated `resolved`, `integrity`, `engines`, or dependency-metadata fields: root `brace-expansion` `5.0.7 → 5.0.9`, nested `glob/node_modules/brace-expansion` `2.1.1 → 2.1.4`, `nanoid` `3.3.15 → 3.3.18`, and `postcss` `8.5.16 → 8.5.26`. If the command changes any other package entry or `package.json`, revert the generated lockfile and stop for redesign; there is no broader fallback command.
 **Output**: A focused `package-lock.json` diff and a lockfile-delta mapping artifact.
 **Acceptance**: `npm ci --loglevel=error` succeeds, `npm audit --audit-level=moderate` exits zero, `package.json` SHA-256 is unchanged, and an artifact maps every lockfile delta to a known advisory path.
@@ -147,3 +147,4 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - 2026-08-22 05:32 Unit 1b complete: audit gate added after frozen install; focused and all 186 tests plus build pass
 - 2026-08-22 05:32 Unit 1c complete: 186 tests pass with 100% statements, branches, functions, and lines; build clean
 - 2026-08-22 05:33 Unit 2a complete: immutable baseline evidence establishes the exact three-high red dependency contract
+- 2026-08-22 05:34 Unit 2b complete: exactly four permitted transitive lock entries updated; manifest unchanged; frozen install and zero-vulnerability audit pass
