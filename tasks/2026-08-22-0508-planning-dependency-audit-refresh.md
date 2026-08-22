@@ -1,7 +1,7 @@
 # Planning: Dependency Audit Refresh
 
 **Status**: approved
-**Created**: 2026-08-22 05:08
+**Created**: 2026-08-22 05:09
 
 ## Goal
 
@@ -36,12 +36,18 @@ Restore the pinned `apple-distribution-kit` as a clean TestFlight prerequisite b
 - [ ] `package.json` remains byte-identical, and every lockfile change maps to one of the three vulnerable dependency paths with no unrelated churn.
 - [ ] A cold reviewer finds no blocker, major, or actionable minor issue.
 - [ ] The focused PR passes CI and merges; its exact merge SHA and checksum are reported.
+- [ ] 100% test coverage on all new code.
+- [ ] All tests pass.
+- [ ] No warnings.
+- [ ] Visual QA is not applicable because no UI, rendering, or layout changes are in scope.
 
 ## Code Coverage Requirements
 
 **MANDATORY: 100% coverage on all new code.**
-- No coverage exclusions on new code.
-- All branches and error paths covered.
+- No `[ExcludeFromCodeCoverage]` or equivalent on new code.
+- All branches covered (if/else, switch, try/catch).
+- All error paths tested.
+- Edge cases: null, empty, boundary values.
 - No product code is expected to change; existing coverage must remain green.
 
 ## Open Questions
@@ -71,3 +77,4 @@ Dedicated worktree: `~/Projects/apple-distribution-kit-audit-refresh`; branch: `
 - 2026-08-22 05:08 Reproduced the exact three-high audit failure and drafted the minimal repair plan.
 - 2026-08-22 05:10 Addressed cold-review findings by pinning byte-identical distribution output, bounded lockfile evidence, and repository CI audit enforcement.
 - 2026-08-22 05:11 Planning review converged; normalized the document to the required template and marked it approved.
+- 2026-08-22 05:22 Quality review corrected initial-commit metadata and restored explicit template criteria.
