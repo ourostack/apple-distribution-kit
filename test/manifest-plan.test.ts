@@ -117,6 +117,43 @@ describe("manifest validation", () => {
     expect(validateManifestObject(manifest)).toEqual({ ok: true, manifest });
   });
 
+  it("accepts a store listing without privacy or export compliance metadata", () => {
+    const manifest = validManifest();
+    const store = manifest.channels[0]!.store as Record<string, unknown>;
+    delete store.privacy;
+    delete store.exportCompliance;
+
+    expect(validateManifestObject(manifest)).toEqual({ ok: true, manifest });
+  });
+
+  it("reports blank channel ids and TestFlight group names without treating them as duplicates", () => {
+    const channel = {
+      id: " ",
+      platform: "ios",
+      distribution: "testflight",
+      bundleId: "app.spoonjoy",
+      buildCommand: "build-ios",
+      packageCommand: "package-ios",
+      testflight: {
+        groups: [
+          { name: " ", type: "internal" },
+          { name: " ", type: "internal" }
+        ]
+      }
+    };
+    const result = validateManifestObject({ ...validManifest(), channels: [channel, { ...channel }] });
+
+    expect(result.ok).toBe(false);
+    const errors = result.ok ? [] : result.errors;
+    expect(errors).toEqual(expect.arrayContaining([
+      { path: "/channels/0/id", message: "Expected non-empty string" },
+      { path: "/channels/1/id", message: "Expected non-empty string" },
+      { path: "/channels/0/testflight/groups/0/name", message: "Expected non-empty string" },
+      { path: "/channels/0/testflight/groups/1/name", message: "Expected non-empty string" }
+    ]));
+    expect(errors.filter((error) => error.message.startsWith("Duplicate"))).toEqual([]);
+  });
+
   it("reports JSON-pointer-like validation errors", () => {
     const manifest = validManifest();
     manifest.channels[0]!.bundleId = "";

@@ -415,6 +415,26 @@ describe("TestFlight request builder", () => {
     ).toThrow("TestFlight channel not found or incomplete: missing");
   });
 
+  it("skips beta app and build localizations when the manifest has no beta copy, privacy URL or build notes", () => {
+    const bare = manifest({
+      groups: [{ name: "Spoonjoy Internal", type: "internal" as const }],
+      build: {},
+      betaApp: undefined
+    });
+    delete (bare.channels[0]!.store as { privacy?: unknown }).privacy;
+
+    const paths = buildTestFlightRequests({
+      manifest: bare,
+      channelId: "ios-testflight",
+      appId: "app-123",
+      buildId: "build-123",
+      groupIdsByName: { "Spoonjoy Internal": "group-1" }
+    }).map((request) => request.path);
+
+    expect(paths).not.toContain("/v1/betaAppLocalizations");
+    expect(paths).not.toContain("/v1/betaBuildLocalizations");
+  });
+
   it("creates internal groups when no existing group id is supplied", () => {
     const internal = manifest({
       groups: [{ name: "Spoonjoy Internal", type: "internal" as const }],
