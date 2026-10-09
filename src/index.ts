@@ -22,6 +22,38 @@ export {
 } from "./testflight.js";
 export { buildXcodeCommand, executeRawCommand, parseXcodeResult, runXcodeCommand, XcodeRunnerError } from "./xcode-runner.js";
 export { resolveManifestPath } from "./manifest-path.js";
+export {
+  buildExportOptions,
+  c99ExtIdentifier,
+  createSigningCertificate,
+  DEFAULT_CERTIFICATE_PASSWORD_ENV,
+  DEFAULT_CERTIFICATE_SECRET_ENV,
+  defaultProfileInstallDirs,
+  deleteSigningKeychain,
+  describeCertificate,
+  ensureProvisioningProfiles,
+  importSigningIdentity,
+  isApiCreatedDevelopmentCertificate,
+  normalizeSerial,
+  parseIdentities,
+  parseKeychainList,
+  readPlistJson,
+  renderSigningXcconfig,
+  revokeApiDevelopmentCertificates,
+  selectIdentity,
+  SigningError,
+  writePlist
+} from "./signing.js";
+export type {
+  CertificateSummary,
+  CreatedSigningCertificate,
+  InstalledProfile,
+  ProfileResult,
+  RevokeResult,
+  SigningExec,
+  SigningIdentity,
+  SigningState
+} from "./signing.js";
 export type { Cli, CliIo } from "./cli-core.js";
 export type { CliDependencies } from "./cli-core.js";
 export type {
@@ -30,7 +62,8 @@ export type {
   AppStoreConnectRequest,
   AscAuth,
   JwtInput,
-  ProviderResolution
+  ProviderResolution,
+  RetryOptions
 } from "./asc.js";
 export type { AppStoreConnectConfig, ConfigDiscoveryOptions } from "./config.js";
 export type {

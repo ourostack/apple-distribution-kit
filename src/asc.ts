@@ -20,6 +20,18 @@ export interface AppStoreConnectClientOptions {
   fetch?: typeof fetch;
   now?: Date;
   baseUrl?: string;
+  retry?: RetryOptions;
+}
+
+/**
+ * Bounded retry for idempotent requests (GET and DELETE). A request is retried when the network fails before a
+ * response arrives (for example "The network connection was lost") or when Apple answers with a retryable status.
+ */
+export interface RetryOptions {
+  attempts: number;
+  baseDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  onRetry?: (event: { method: string; path: string; attempt: number; delayMs: number; reason: string }) => void;
 }
 
 export interface AppStoreConnectClient {
@@ -78,7 +90,7 @@ export function signAppStoreConnectJwt(input: JwtInput): string {
 export function createAppStoreConnectClient(options: AppStoreConnectClientOptions): AppStoreConnectClient {
   const fetchImpl = options.fetch ?? fetch;
   const baseUrl = options.baseUrl ?? "https://api.appstoreconnect.apple.com";
-  const send = async (input: AppStoreConnectRequest): Promise<unknown> => {
+  const sendOnce = async (input: AppStoreConnectRequest): Promise<unknown> => {
     const url = new URL(input.path, baseUrl);
     Object.entries(input.query ?? {}).forEach(([key, value]) => url.searchParams.set(key, value));
     const token = signAppStoreConnectJwt(options.now ? { ...options.auth, now: options.now } : options.auth);
@@ -95,6 +107,23 @@ export function createAppStoreConnectClient(options: AppStoreConnectClientOption
       ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {})
     });
     return parseResponse(response);
+  };
+  const send = async (input: AppStoreConnectRequest): Promise<unknown> => {
+    const retry = options.retry;
+    const attempts = retry && (input.method === "GET" || input.method === "DELETE") ? Math.max(1, retry.attempts) : 1;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await sendOnce(input);
+      } catch (error) {
+        const transient = error instanceof AppStoreConnectError ? error.retryable : true;
+        if (!transient || attempt >= attempts) {
+          throw error;
+        }
+        const delayMs = (retry!.baseDelayMs ?? 2000) * 2 ** (attempt - 1);
+        retry!.onRetry?.({ method: input.method, path: input.path, attempt, delayMs, reason: errorReason(error) });
+        await (retry!.sleep ?? defaultSleep)(delayMs);
+      }
+    }
   };
   return {
     get: async (path, query = {}) => send({ method: "GET", path, query }),
@@ -187,6 +216,16 @@ function firstAppleError(parsed: unknown): { code: string; title: string } {
 
 function retryableStatus(status: number): boolean {
   return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+}
+
+function errorReason(error: unknown): string {
+  const cause = (error as { cause?: unknown }).cause;
+  const message = (error as Error).message;
+  return cause instanceof Error && cause.message !== "" ? `${message}: ${cause.message}` : message;
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function base64Url(input: string | Buffer): string {

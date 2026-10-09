@@ -7,6 +7,7 @@ import { createPlan, type PlanMode } from "./plan.js";
 import { planStoreSubmission } from "./store.js";
 import { getAppStoreConnect, smokeAppStoreConnect } from "./asc.js";
 import { redactSecrets } from "./redaction.js";
+import { signingCommand, signingUsage, type SigningCliDependencies } from "./signing-cli.js";
 import { buildTestFlightRequests, planTestFlightSubmission, publishTestFlightRequests } from "./testflight.js";
 import {
   buildXcodeCommand,
@@ -30,6 +31,7 @@ export interface CliDependencies {
   getAppStoreConnect?: typeof getAppStoreConnect;
   executeXcodeCommand?: (argv: string[]) => Promise<RawCommandResult>;
   publishTestFlightRequests?: typeof publishTestFlightRequests;
+  signing?: Partial<SigningCliDependencies>;
 }
 
 interface CliError {
@@ -51,7 +53,7 @@ Usage:
   apple-distribution-kit xcode run --kind <kind> --mode dry-run|apply [--json] [command options]
   apple-distribution-kit asc smoke [--config <path>] [--json]
   apple-distribution-kit asc get --path <path> [--query <name=value>] [--config <path>] [--json]
-
+${signingUsage}
 Commands:
   manifest validate   Validate distribution/apple-distribution.json
   plan                Build a machine-readable distribution plan
@@ -61,6 +63,8 @@ Commands:
   xcode run           Build or run Apple toolchain commands behind an explicit mode gate
   asc smoke           Verify App Store Connect API credentials without printing secrets
   asc get             GET an App Store Connect API path with authenticated, redacted output
+  signing             Long-lived CI signing: create the certificate once, then import it, fetch profiles and
+                      sign with no certificate created per run (see README "CI Signing")
 `;
 
 export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
@@ -104,6 +108,14 @@ export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
     }
     if (command === "asc" && subcommand === "get") {
       return ascGetCommand(io, json, args, dependencies.getAppStoreConnect ?? getAppStoreConnect);
+    }
+
+    if (command === "signing") {
+      return signingCommand(io, json, args, {
+        exec: dependencies.executeXcodeCommand ?? executeRawCommand,
+        env: process.env,
+        ...dependencies.signing
+      });
     }
 
     return fail(io, json, 64, {
