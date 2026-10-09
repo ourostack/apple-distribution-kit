@@ -328,3 +328,101 @@ describe("provider resolution", () => {
     expect(resolveProviderPublicId({ team: { teamId: "TEAM", providerPublicId: " " } }).ok).toBe(false);
   });
 });
+
+describe("App Store Connect client retry", () => {
+  const auth = () => ({
+    issuerId: "issuer",
+    keyId: "KEY",
+    privateKeyPem: generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "pem", type: "pkcs8" }).toString()
+  });
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+  it("retries idempotent requests after network loss and retryable statuses", async () => {
+    const responses: Array<() => Response> = [
+      () => {
+        throw new TypeError("fetch failed", { cause: new Error("The network connection was lost.") });
+      },
+      () => json({ errors: [{ code: "UNAVAILABLE", title: "Service unavailable" }] }, 503),
+      () => json({ data: [] })
+    ];
+    const events: unknown[] = [];
+    const delays: number[] = [];
+    const client = createAppStoreConnectClient({
+      auth: auth(),
+      fetch: async () => responses.shift()!(),
+      retry: { attempts: 3, baseDelayMs: 10, sleep: async (ms) => void delays.push(ms), onRetry: (event) => events.push(event) }
+    });
+    await expect(client.get("/v1/profiles")).resolves.toEqual({ data: [] });
+    expect(delays).toEqual([10, 20]);
+    expect(events).toEqual([
+      { method: "GET", path: "/v1/profiles", attempt: 1, delayMs: 10, reason: "fetch failed: The network connection was lost." },
+      { method: "GET", path: "/v1/profiles", attempt: 2, delayMs: 20, reason: "Service unavailable" }
+    ]);
+  });
+
+  it("stops after the attempt budget and never retries non-idempotent or permanent failures", async () => {
+    let calls = 0;
+    const failing = createAppStoreConnectClient({
+      auth: auth(),
+      fetch: async () => {
+        calls += 1;
+        throw new TypeError("fetch failed");
+      },
+      retry: { attempts: 2, baseDelayMs: 1 }
+    });
+    await expect(failing.request({ method: "DELETE", path: "/v1/profiles/X" })).rejects.toThrow("fetch failed");
+    expect(calls).toBe(2);
+    await expect(failing.request({ method: "POST", path: "/v1/profiles", body: {} })).rejects.toThrow("fetch failed");
+    expect(calls).toBe(3);
+
+    let permanentCalls = 0;
+    const permanent = createAppStoreConnectClient({
+      auth: auth(),
+      fetch: async () => {
+        permanentCalls += 1;
+        return json({ errors: [{ code: "NOT_FOUND", title: "Not found" }] }, 404);
+      },
+      retry: { attempts: 0, sleep: async () => undefined }
+    });
+    await expect(permanent.get("/v1/profiles")).rejects.toThrow("Not found");
+    const permanentWithBudget = createAppStoreConnectClient({
+      auth: auth(),
+      fetch: async () => {
+        permanentCalls += 1;
+        return json({ errors: [{ code: "NOT_FOUND", title: "Not found" }] }, 404);
+      },
+      retry: { attempts: 3, sleep: async () => undefined }
+    });
+    await expect(permanentWithBudget.get("/v1/profiles")).rejects.toThrow("Not found");
+    expect(permanentCalls).toBe(2);
+  });
+
+  it("uses the default backoff when none is given", async () => {
+    const responses = [() => json({}, 500), () => json({ ok: 1 })];
+    const delays: number[] = [];
+    const client = createAppStoreConnectClient({
+      auth: auth(),
+      fetch: async () => responses.shift()!(),
+      retry: { attempts: 2, sleep: async (ms) => void delays.push(ms) }
+    });
+    await expect(client.get("/v1/apps")).resolves.toEqual({ ok: 1 });
+    expect(delays).toEqual([2000]);
+  });
+
+  it("reports a network failure without a cause message", async () => {
+    const events: Array<{ reason: string }> = [];
+    const responses: Array<() => Response> = [
+      () => {
+        throw new TypeError("fetch failed", { cause: new Error("") });
+      },
+      () => json({ ok: 1 })
+    ];
+    const client = createAppStoreConnectClient({
+      auth: auth(),
+      fetch: async () => responses.shift()!(),
+      retry: { attempts: 2, baseDelayMs: 1, onRetry: (event) => events.push(event) }
+    });
+    await expect(client.get("/v1/apps")).resolves.toEqual({ ok: 1 });
+    expect(events[0]!.reason).toBe("fetch failed");
+  });
+});
