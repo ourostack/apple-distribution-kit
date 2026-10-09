@@ -313,7 +313,13 @@ describe("ensureProvisioningProfiles", () => {
       "GET /v1/certificates": { data: [{ id: "OTHER", attributes: {} }], links: { next: "https://api.example/v1/certificates?cursor=2" } },
       "GET https://api.example/v1/certificates?cursor=2": { data: [distributionCertificate] },
       "GET /v1/bundleIds": bundles,
-      "GET /v1/profiles": { data: [profile("P0", `${name} copy`, "ACTIVE", "2027-10-09T00:00:00Z"), profile("P1", name, "ACTIVE", "2027-10-09T00:00:00Z")] }
+      "GET /v1/profiles": {
+        data: [
+          profile("P0", `${name} copy`, "ACTIVE", "2027-10-09T00:00:00Z"),
+          profile("P1", name, "ACTIVE", "2027-10-09T00:00:00Z"),
+          profile("P2", name, "ACTIVE", "2027-10-09T00:00:00Z")
+        ]
+      }
     });
     const result = await ensureProvisioningProfiles({
       client,

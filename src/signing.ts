@@ -290,7 +290,7 @@ export function selectIdentity(state: SigningState, sha1?: string): SigningIdent
 /**
  * Finds or creates one provisioning profile per bundle identifier for the given certificate, and writes each profile
  * into the install directories. Profiles are named `<prefix> <bundle id> <certificate id>`, so a renewed certificate
- * gets fresh profiles and stale kit-owned profiles with the same name are deleted. Only GET requests are made when every
+ * gets fresh profiles, and invalid or expiring kit-owned profiles with the same name are deleted. Only GET requests are made when every
  * profile is already active.
  */
 export async function ensureProvisioningProfiles(input: {
@@ -331,15 +331,18 @@ export async function ensureProvisioningProfiles(input: {
     const existing = (
       await listAll(input.client, "/v1/profiles", { "filter[name]": name, "filter[profileType]": profileType, limit: "200" })
     ).filter((resource) => record(resource.attributes).name === name);
-    let profile = existing.find((resource) => {
+    const usable = (resource: JsonRecord) => {
       const attributes = record(resource.attributes);
       return (
         attributes.profileState === "ACTIVE" &&
         typeof attributes.profileContent === "string" &&
         Date.parse(String(attributes.expirationDate)) - now > minimumValidMs
       );
-    });
-    for (const stale of existing.filter((resource) => resource !== profile)) {
+    };
+    let profile = existing.find(usable);
+    // Only invalid or expiring copies are deleted. A second active copy (from a concurrent run) is left alone, because
+    // another in-flight build may have embedded it.
+    for (const stale of existing.filter((resource) => !usable(resource))) {
       await input.client.request({ method: "DELETE", path: `/v1/profiles/${encodeURIComponent(String(stale.id))}` });
       deletedProfileIds.push(String(stale.id));
     }
