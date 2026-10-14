@@ -262,6 +262,10 @@ The separate `developer` command family uses an explicitly enrolled Apple Develo
 web session, **not** App Store Connect JWT credentials. It only inspects authentication
 keys; it cannot create, revoke or download keys, change Services IDs, or accept agreements.
 Existing ASC and signing commands are unchanged. Node 22 or newer is required.
+This Developer credential-store milestone supports **macOS and Linux only**.
+Windows and other platforms fail closed with `unsupported_platform` before
+reading stdin/files, enrolling/loading credentials, refreshing the store or
+extracting credential headers. No Windows ACL credential-store adapter exists.
 
 ```sh
 # Create a private destination directory (not inside a source checkout).
@@ -315,8 +319,8 @@ destination: choose a new destination when manually re-enrolling.
 The session store is **plaintext owner-only local storage**, not encryption or
 Keychain storage. Keep both enrollment and store files outside Git, never share
 them, and retire old files according to your local credential-handling policy.
-POSIX ownership/mode checks are not a Windows ACL guarantee; this milestone does
-not supply a Windows platform credential-store adapter.
+POSIX ownership/mode checks are enforced on macOS/Linux. Windows is explicitly
+refused at runtime, not permitted with weakened file checks.
 
 `status` performs an actual scoped key-list read and returns `{ ready: true, teamId }`
 only after HTTP 200, a JSON schema with numeric `resultCode: 0`, and valid keys.
@@ -331,10 +335,12 @@ never followed, each request has a 15-second timeout, and exceptions/server stri
 are replaced by stable `DeveloperError.code` values. HTTP 401, recognized Apple
 login redirects and HTML responses require manual sign-in; an empty/expired jar
 also returns a native `RequiresHuman` sign-in gate. HTTP 403 is `permission_denied`,
-not assumed to be 2FA. Unknown nonzero Apple result codes remain `apple_error`,
-including unverified agreement responses: they are **not** guessed to be sign-in,
-2FA or agreement gates. Agreement acceptance, if required by Apple, is always
-manual; no agreement is accepted by this layer.
+not assumed to be 2FA. The verified numeric Apple `resultCode: 2100` returns
+`agreement_required` with a native manual `RequiresHuman` agreement gate at
+`https://developer.apple.com/register/agree/`. Unknown other nonzero result codes
+remain sanitized `apple_error`; server text is never used to guess sign-in,
+2FA or agreement gates. Agreement acceptance is always manual; no agreement is
+accepted by this layer.
 
 Eligible secure `Set-Cookie` updates on validated successful responses are
 atomically persisted in the private store. A detected change to the loaded store

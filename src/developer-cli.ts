@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createDeveloperClient } from "./developer.js";
-import { DeveloperError, importDeveloperSession, loadDeveloperSession, readDeveloperPrivateInput, validateDeveloperId } from "./developer-session.js";
+import { assertDeveloperPlatform, DeveloperError, importDeveloperSession, loadDeveloperSession, readDeveloperPrivateInput, validateDeveloperId } from "./developer-session.js";
 import type { CliIo } from "./cli-core.js";
 
 export interface DeveloperCliDependencies {
@@ -38,6 +38,7 @@ export async function developerCommand(io: CliIo, args: string[], dependencies: 
   const json = args.includes("--json");
   try {
     const { command, options } = parse(args);
+    assertDeveloperPlatform();
     const teamId = options.get("--team-id")!;
     const sessionFile = options.get("--session-file")!;
     let result: unknown;

@@ -76,6 +76,7 @@ export function createDeveloperClient(options: DeveloperClientOptions): Develope
     let data: unknown;
     try { data = await response.json(); } catch { throw new DeveloperError("invalid_response"); }
     if (!record(data) || typeof data.resultCode !== "number" || !Number.isSafeInteger(data.resultCode)) throw new DeveloperError("invalid_response");
+    if (data.resultCode === 2100) throw new DeveloperError("agreement_required");
     if (data.resultCode !== 0) throw new DeveloperError("apple_error");
     if (!Array.isArray(data.keys) || data.keys.length > 50) throw new DeveloperError("invalid_response");
     const keys = data.keys.map(summary);

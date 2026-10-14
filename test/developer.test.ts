@@ -124,6 +124,22 @@ describe("Developer read-only transport", () => {
     await expect(client(async () => response({ resultCode: 999999, resultString: `Agreement / 2FA ${secret}` })).status()).rejects.toMatchObject({ code: "apple_error" });
   });
 
+  it("maps only the verified numeric agreement code to a manual native human gate", async () => {
+    const c = client(async () => response({ resultCode: 2100, resultString: secret, keys: [] }));
+    await expect(c.status()).rejects.toMatchObject({
+      code: "agreement_required",
+      requiresHuman: {
+        type: "requiresHuman",
+        code: "developer_agreement_required",
+        url: "https://developer.apple.com/register/agree/"
+      }
+    });
+    for (const code of [2099, 2101, "2100"]) {
+      await expect(client(async () => response({ resultCode: code, resultString: `agree ${secret}` })).status())
+        .rejects.toMatchObject({ code: typeof code === "number" ? "apple_error" : "invalid_response" });
+    }
+  });
+
   it("paginates full pages then stops on a short page", async () => {
     const c = client(async (_url, init) => {
       const page = new URLSearchParams(String(init!.body)).get("pageNumber");
@@ -149,6 +165,51 @@ describe("Developer read-only transport", () => {
 });
 
 describe("private Developer enrollment and refresh", () => {
+  it("refuses Windows credentials before any file, stdin or credential-header I/O", async () => {
+    const file = path("platform-existing.json");
+    const s = kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: file });
+    const destination = path("windows-must-not-exist.json");
+    const before = readFileSync(file, "utf8");
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    let ioAttempted = false;
+    const refuseIo = () => { ioAttempted = true; throw new Error("credential I/O must not run"); };
+    const checks = [
+      vi.spyOn(fs, "readFileSync").mockImplementation(refuseIo),
+      vi.spyOn(fs, "openSync").mockImplementation(refuseIo),
+      vi.spyOn(fs, "lstatSync").mockImplementation(refuseIo)
+    ];
+    syncBuiltinESMExports();
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      expect(() => kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: destination })).toThrowError(expect.objectContaining({ code: "unsupported_platform" }));
+      expect(() => kit.loadDeveloperSession({ teamId, sessionFile: file })).toThrowError(expect.objectContaining({ code: "unsupported_platform" }));
+      expect(() => s.refresh("account/auth/key/list", ["session=NEW; Secure; Path=/"])).toThrowError(expect.objectContaining({ code: "unsupported_platform" }));
+      expect(() => s.cookieHeader("account/auth/key/list")).toThrowError(expect.objectContaining({ code: "unsupported_platform" }));
+      let output = "";
+      const cli = kit.createCli({ stdout: chunk => { output += chunk; }, stderr: chunk => { output += chunk; } }, {
+        developer: { readStdin: refuseIo }
+      } satisfies CliDependencies);
+      for (const input of [file, "-"]) {
+        output = "";
+        expect(await cli(["developer", "session", "import", "--team-id", teamId, "--session-file", destination, "--input", input, "--json"])).toBe(69);
+        expect(JSON.parse(output).error.code).toBe("unsupported_platform");
+      }
+      expect(ioAttempted).toBe(false);
+      checks.forEach(check => check.mockRestore());
+      syncBuiltinESMExports();
+      output = "";
+      expect(await cli(["--version"])).toBe(0);
+      expect(output).toContain("0.1.0");
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      checks.forEach(check => check.mockRestore());
+      syncBuiltinESMExports();
+    }
+    expect(existsSync(destination)).toBe(false);
+    expect(existsSync(`${file}.refresh.lock`)).toBe(false);
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
   it("records exact resource paths durably while the worker is running", () => {
     const planned = path("recorded-probe.json");
     expect(JSON.parse(readFileSync(join(root, "inventory.json"), "utf8"))).toContain(planned);
@@ -398,6 +459,20 @@ describe("private Developer enrollment and refresh", () => {
 });
 
 describe("Developer CLI", () => {
+  it("reports the verified agreement gate without raw portal values or accepting terms", async () => {
+    const file = path("cli-agreement.json");
+    kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: file });
+    let output = "";
+    let calls = 0;
+    const cli = kit.createCli({ stdout: chunk => { output += chunk; }, stderr: chunk => { output += chunk; } }, {
+      developer: { fetch: async () => { calls++; return response({ resultCode: 2100, resultString: secret }); } }
+    } satisfies CliDependencies);
+    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(69);
+    expect(JSON.parse(output).error.requiresHuman?.code).toBe("developer_agreement_required");
+    expect(output).not.toContain(secret);
+    expect(calls).toBe(1);
+  });
+
   it.each([
     ["developer", "status"],
     ["developer", "status", "--team-id"],

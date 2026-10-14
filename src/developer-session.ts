@@ -9,6 +9,7 @@ export type DeveloperReadPath = "account/auth/key/list" | "account/auth/key/get"
 export type DeveloperErrorCode =
   | "invalid_arguments" | "invalid_session" | "unsafe_session_store" | "session_exists"
   | "session_store_busy"
+  | "unsupported_platform" | "agreement_required"
   | "team_mismatch" | "session_expired" | "sign_in_required" | "permission_denied"
   | "redirect_rejected" | "network_error" | "http_error" | "apple_error"
   | "invalid_response" | "pagination_non_progress" | "pagination_limit";
@@ -23,6 +24,12 @@ export class DeveloperError extends Error {
         code: "developer_sign_in_required",
         message: "Sign in to Apple Developer manually, then enroll a refreshed session.",
         url: "https://developer.apple.com/account/"
+      });
+    } else if (code === "agreement_required") {
+      this.requiresHuman = createRequiresHuman({
+        code: "developer_agreement_required",
+        message: "Review and accept the Apple Developer agreement manually before retrying inspection.",
+        url: "https://developer.apple.com/register/agree/"
       });
     }
   }
@@ -41,6 +48,10 @@ export interface DeveloperEnrollmentCookie {
 export interface DeveloperEnrollment {
   teamId: string;
   cookies: DeveloperEnrollmentCookie[];
+}
+
+export function assertDeveloperPlatform(): void {
+  if (process.platform !== "darwin" && process.platform !== "linux") throw new DeveloperError("unsupported_platform");
 }
 
 export function validateDeveloperId(value: unknown): asserts value is string {
@@ -99,6 +110,7 @@ function enrollmentJar(input: unknown, teamId: string): CookieJar {
 }
 
 function checkParents(file: string, create: boolean): void {
+  assertDeveloperPlatform();
   const parent = dirname(file);
   const parts = parent.slice(parse(parent).root.length).split(sep).filter(Boolean);
   let current = parse(parent).root;
@@ -109,18 +121,19 @@ function checkParents(file: string, create: boolean): void {
     if (st.isSymbolicLink() || !st.isDirectory()) throw new DeveloperError("unsafe_session_store");
   }
   const st = lstatSync(parent);
-  if (process.platform !== "win32" && (st.uid !== process.getuid!() || (st.mode & 0o077) !== 0)) {
+  if (st.uid !== process.getuid!() || (st.mode & 0o077) !== 0) {
     throw new DeveloperError("unsafe_session_store");
   }
 }
 
 function checkFile(st: Stats): void {
   if (!st.isFile() || st.nlink !== 1 ||
-    (process.platform !== "win32" && (st.uid !== process.getuid!() || (st.mode & 0o077) !== 0)) ||
+    st.uid !== process.getuid!() || (st.mode & 0o077) !== 0 ||
     st.size > 1024 * 1024) throw new DeveloperError("unsafe_session_store");
 }
 
 export function readDeveloperPrivateInput(file: string): unknown {
+  assertDeveloperPlatform();
   let fd: number | undefined;
   try {
     const target = resolve(file);
@@ -147,12 +160,14 @@ export class DeveloperSession {
   }
 
   cookieHeader(path: DeveloperReadPath): string {
+    assertDeveloperPlatform();
     const header = this.#jar.getCookieStringSync(developerReadUrl(path));
     if (!header) throw new DeveloperError("session_expired");
     return header;
   }
 
   refresh(path: DeveloperReadPath, values: string[]): void {
+    assertDeveloperPlatform();
     const url = developerReadUrl(path);
     if (values.length === 0) return;
     const candidate = CookieJar.deserializeSync(this.#jar.serializeSync()!);
@@ -235,6 +250,7 @@ function writeStore(file: string, data: string, replace: boolean): void {
 }
 
 export function importDeveloperSession(options: { teamId: string; input: unknown; sessionFile: string }): DeveloperSession {
+  assertDeveloperPlatform();
   validateDeveloperId(options.teamId);
   const jar = enrollmentJar(options.input, options.teamId);
   const file = resolve(options.sessionFile);
@@ -250,6 +266,7 @@ export function importDeveloperSession(options: { teamId: string; input: unknown
 }
 
 export function loadDeveloperSession(options: { teamId: string; sessionFile: string }): DeveloperSession {
+  assertDeveloperPlatform();
   validateDeveloperId(options.teamId);
   const file = resolve(options.sessionFile);
   const stored = readDeveloperPrivateInput(file);
