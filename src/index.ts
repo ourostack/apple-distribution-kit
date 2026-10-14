@@ -1,4 +1,9 @@
 export { createCli } from "./cli-core.js";
+export { createDeveloperClient, DeveloperError } from "./developer.js";
+export { importDeveloperSession, loadDeveloperSession, DeveloperSession } from "./developer-session.js";
+export type { DeveloperClient, DeveloperClientOptions, DeveloperKeySummary, DeveloperErrorCode } from "./developer.js";
+export type { DeveloperEnrollment, DeveloperEnrollmentCookie } from "./developer-session.js";
+export type { DeveloperCliDependencies } from "./developer-cli.js";
 export {
   AppStoreConnectError,
   createAppStoreConnectClient,

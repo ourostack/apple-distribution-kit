@@ -256,3 +256,116 @@ What each command does:
 
 Do not pass `-allowProvisioningUpdates` or API key arguments to `xcodebuild` with this setup; nothing in the archive or
 export needs Apple's servers.
+# Apple Developer read-only inspection
+
+The separate `developer` command family uses an explicitly enrolled Apple Developer
+web session, **not** App Store Connect JWT credentials. It only inspects authentication
+keys; it cannot create, revoke or download keys, change Services IDs, or accept agreements.
+Existing ASC and signing commands are unchanged. Node 22 or newer is required.
+
+```sh
+# Create a private destination directory (not inside a source checkout).
+mkdir -m 700 "$HOME/.apple-developer-session"
+
+# Enrollment is local only: no Apple request is made by import.
+apple-distribution-kit developer session import \
+  --team-id 743GT2AJ24 \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --input "$HOME/.apple-developer-session/enrollment.json" --json
+
+# --input - (or omitted --input) consumes the same JSON from stdin.
+apple-distribution-kit developer status \
+  --team-id 743GT2AJ24 --session-file "$HOME/.apple-developer-session/session.json" --json
+apple-distribution-kit developer keys list \
+  --team-id 743GT2AJ24 --session-file "$HOME/.apple-developer-session/session.json" --json
+apple-distribution-kit developer keys get --key-id ABC123DE45 \
+  --team-id 743GT2AJ24 --session-file "$HOME/.apple-developer-session/session.json" --json
+```
+
+Every command requires an explicit ten-character uppercase alphanumeric team ID and
+an explicit private session file; `keys get` also requires a key ID of the same syntax.
+Unknown, duplicate and missing options are errors. Never put cookie values in arguments.
+The enrollment input is a private file or stdin containing:
+
+```ts
+{
+  teamId: string;
+  cookies: Array<{
+    name: string;
+    value: string;
+    domain: string;
+    path: string;
+    secure: boolean;
+    httpOnly: boolean;
+    expires: number; // CDP seconds since epoch; -1 means session cookie
+    sameSite?: "Strict" | "Lax" | "None";
+  }>;
+}
+```
+
+Enrollment rejects expired, insecure or out-of-scope cookies. Only cookies eligible
+for `https://developer.apple.com/services-account/QH65B2/` are accepted, with
+domain/path/expiry semantics supplied by `tough-cookie`. No browser profiles are
+enumerated, decrypted or imported. The input and destination must have private,
+non-symlink parents; on POSIX their immediate parent must be owned by the current
+user and have no group/world permissions. Files must be regular, owner-only,
+current-user-owned and not hardlinked. Enrollment never overwrites an existing
+destination: choose a new destination when manually re-enrolling.
+
+The session store is **plaintext owner-only local storage**, not encryption or
+Keychain storage. Keep both enrollment and store files outside Git, never share
+them, and retire old files according to your local credential-handling policy.
+POSIX ownership/mode checks are not a Windows ACL guarantee; this milestone does
+not supply a Windows platform credential-store adapter.
+
+`status` performs an actual scoped key-list read and returns `{ ready: true, teamId }`
+only after HTTP 200, a JSON schema with numeric `resultCode: 0`, and valid keys.
+List uses 50 keys per page, rejects duplicate/non-progressing pages, and fails
+instead of silently returning partial data at the 100-page limit. Get verifies the
+returned key ID. Summaries contain only `keyId`, `keyName`, validated `serviceIds`,
+`canDownload` and `canRevoke`; service configurations, creator identity and private
+key payloads are never returned.
+
+Only the pinned key-list/key-get POST paths receive credentials. Redirects are
+never followed, each request has a 15-second timeout, and exceptions/server strings
+are replaced by stable `DeveloperError.code` values. HTTP 401, recognized Apple
+login redirects and HTML responses require manual sign-in; an empty/expired jar
+also returns a native `RequiresHuman` sign-in gate. HTTP 403 is `permission_denied`,
+not assumed to be 2FA. Unknown nonzero Apple result codes remain `apple_error`,
+including unverified agreement responses: they are **not** guessed to be sign-in,
+2FA or agreement gates. Agreement acceptance, if required by Apple, is always
+manual; no agreement is accepted by this layer.
+
+Eligible secure `Set-Cookie` updates on validated successful responses are
+atomically persisted in the private store. A detected change to the loaded store
+is not overwritten. Run one command at a time per session store: snapshot checking
+is not an interprocess transaction lock.
+Session cookies retain browser-style session-cookie lifetime until Apple rejects
+them; persisted enrollment does not confer a new authenticated lifetime. Expiry,
+server-side invalidation, MFA or changed agreements may require signing in again
+and enrolling a fresh session. There is no promise of avoiding 2FA, and no
+password/2FA/CAPTCHA automation.
+
+Library usage:
+
+```ts
+import { createDeveloperClient, loadDeveloperSession, DeveloperError } from "apple-distribution-kit";
+
+const teamId = "743GT2AJ24";
+const session = loadDeveloperSession({ teamId, sessionFile: privatePath });
+const client = createDeveloperClient({ teamId, session });
+try {
+  const status = await client.status();
+  const keys = await client.keys.list();
+  const key = await client.keys.get("ABC123DE45");
+} catch (error) {
+  if (error instanceof DeveloperError) {
+    // Inspect the stable code / optional native requiresHuman; never dump credentials.
+  }
+}
+```
+
+JSON CLI success uses `{ ok: true, result }`; errors use
+`{ ok: false, error: { code, message, requiresHuman? } }`. Invalid arguments exit
+64, and failed inspection or a human gate exits 69. Import reports only enrollment,
+not live readiness. Neither library nor CLI returns arbitrary portal JSON.
