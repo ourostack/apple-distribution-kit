@@ -8,6 +8,7 @@ export const DEVELOPER_BASE_URL = "https://developer.apple.com/services-account/
 export type DeveloperReadPath = "account/auth/key/list" | "account/auth/key/get";
 export type DeveloperErrorCode =
   | "invalid_arguments" | "invalid_session" | "unsafe_session_store" | "session_exists"
+  | "session_store_busy"
   | "team_mismatch" | "session_expired" | "sign_in_required" | "permission_denied"
   | "redirect_rejected" | "network_error" | "http_error" | "apple_error"
   | "invalid_response" | "pagination_non_progress" | "pagination_limit";
@@ -164,15 +165,50 @@ export class DeveloperSession {
       } catch { throw new DeveloperError("invalid_response"); }
     }
     const serialized = encode(this.teamId, candidate);
+    const lock = acquireRefreshLock(this.#file);
     try {
       // A private, non-symlink parent and unchanged original are required even for refresh.
       const original = readDeveloperPrivateInput(this.#file);
       if (JSON.stringify(original) !== this.#snapshot) throw new DeveloperError("unsafe_session_store");
       writeStore(this.#file, serialized, true);
     } catch { throw new DeveloperError("unsafe_session_store"); }
+    finally { releaseRefreshLock(lock); }
     this.#jar = candidate;
     this.#snapshot = serialized;
   }
+}
+
+interface RefreshLock {
+  path: string;
+  fd: number;
+}
+
+function acquireRefreshLock(file: string): RefreshLock {
+  const path = `${file}.refresh.lock`;
+  try {
+    checkParents(path, false);
+    return {
+      path,
+      fd: openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new DeveloperError("session_store_busy");
+    throw new DeveloperError("unsafe_session_store");
+  }
+}
+
+function releaseRefreshLock(lock: RefreshLock): void {
+  try {
+    checkParents(lock.path, false);
+    const acquired = fstatSync(lock.fd);
+    const current = lstatSync(lock.path);
+    // Keep the acquired descriptor open so its inode cannot be reused by another owner.
+    if (!current.isFile() || current.dev !== acquired.dev || current.ino !== acquired.ino) {
+      throw new DeveloperError("unsafe_session_store");
+    }
+    unlinkSync(lock.path);
+  } catch { throw new DeveloperError("unsafe_session_store"); }
+  finally { closeSync(lock.fd); }
 }
 
 function encode(teamId: string, jar: CookieJar): string {

@@ -338,8 +338,13 @@ manual; no agreement is accepted by this layer.
 
 Eligible secure `Set-Cookie` updates on validated successful responses are
 atomically persisted in the private store. A detected change to the loaded store
-is not overwritten. Run one command at a time per session store: snapshot checking
-is not an interprocess transaction lock.
+is not overwritten. Refresh acquires an exclusive owner-only
+`<session-file>.refresh.lock` before re-reading, comparing or replacing the store.
+Contention returns sanitized `session_store_busy` (CLI exit 69), without changing
+the store or removing another command's lock. Successful and failed refreshes
+release only the exact acquired lock, verified by its open descriptor's identity.
+Existing locks, including stale locks left by an interrupted process, are never
+automatically broken; confirmed abandoned locks require explicit local recovery.
 Session cookies retain browser-style session-cookie lifetime until Apple rejects
 them; persisted enrollment does not confer a new authenticated lifetime. Expiry,
 server-side invalidation, MFA or changed agreements may require signing in again
