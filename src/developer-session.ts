@@ -6,18 +6,27 @@ import { createRequiresHuman, type RequiresHuman } from "./plan.js";
 
 export const DEVELOPER_BASE_URL = "https://developer.apple.com/services-account/QH65B2/";
 export type DeveloperReadPath = "account/auth/key/list" | "account/auth/key/get";
+/** Internal capability, not exported by the package entry point. */
+export const developerTransportAccess = Symbol("developerTransportAccess");
+export type DeveloperTransportPath = DeveloperReadPath | "account/auth/key/create" | "account/auth/key/v2/create" |
+  "account/auth/key/revoke" | `account/auth/key/download?teamId=${string}&keyId=${string}` |
+  "permissions" | `bundle:${string}`;
 export type DeveloperErrorCode =
   | "invalid_arguments" | "invalid_session" | "unsafe_session_store" | "session_exists"
   | "session_store_busy"
   | "unsupported_platform" | "agreement_required"
   | "team_mismatch" | "session_expired" | "sign_in_required" | "permission_denied"
   | "redirect_rejected" | "network_error" | "http_error" | "apple_error"
-  | "invalid_response" | "pagination_non_progress" | "pagination_limit";
+  | "invalid_response" | "pagination_non_progress" | "pagination_limit"
+  | DeveloperLifecycleErrorCode;
+export type DeveloperLifecycleErrorCode =
+  | "invalid_plan" | "stale_plan" | "resource_mismatch" | "resource_exists"
+  | "scope_mismatch" | "operation_pending" | "invalid_operation" | "unsafe_output";
 
 export class DeveloperError extends Error {
   readonly requiresHuman?: RequiresHuman;
   constructor(readonly code: DeveloperErrorCode) {
-    super(`Developer inspection failed (${code}).`);
+    super(`Developer operation failed (${code}).`);
     this.name = "DeveloperError";
     if (code === "session_expired" || code === "sign_in_required") {
       this.requiresHuman = createRequiresHuman({
@@ -28,7 +37,7 @@ export class DeveloperError extends Error {
     } else if (code === "agreement_required") {
       this.requiresHuman = createRequiresHuman({
         code: "developer_agreement_required",
-        message: "Review and accept the Apple Developer agreement manually before retrying inspection.",
+        message: "Review and accept the Apple Developer agreement manually before further Developer requests.",
         url: "https://developer.apple.com/register/agree/"
       });
     }
@@ -61,6 +70,17 @@ export function validateDeveloperId(value: unknown): asserts value is string {
 export function developerReadUrl(path: DeveloperReadPath): string {
   if (path !== "account/auth/key/list" && path !== "account/auth/key/get") throw new DeveloperError("invalid_arguments");
   return DEVELOPER_BASE_URL + path;
+}
+
+export function developerTransportUrl(path: DeveloperTransportPath): string {
+  if (path === "permissions") return "https://developer.apple.com/services-account/checkPermissions";
+  if (/^bundle:[A-Z0-9]{10}$/.test(path)) {
+    return `https://developer.apple.com/services-account/v1/bundleIds/${path.slice(7)}?fields[bundleIds]=name,identifier,seedId&include=bundleIdCapabilities.relatedAppConsentBundleIds`;
+  }
+  if (["account/auth/key/list", "account/auth/key/get", "account/auth/key/create",
+    "account/auth/key/v2/create", "account/auth/key/revoke"].includes(path) ||
+    /^account\/auth\/key\/download\?teamId=[A-Z0-9]{10}&keyId=[A-Z0-9]{10}$/.test(path)) return DEVELOPER_BASE_URL + path;
+  throw new DeveloperError("invalid_arguments");
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -109,7 +129,7 @@ function enrollmentJar(input: unknown, teamId: string): CookieJar {
   return jar;
 }
 
-function checkParents(file: string, create: boolean): void {
+export function checkDeveloperPrivateParents(file: string, create: boolean): void {
   assertDeveloperPlatform();
   const parent = dirname(file);
   const parts = parent.slice(parse(parent).root.length).split(sep).filter(Boolean);
@@ -126,7 +146,7 @@ function checkParents(file: string, create: boolean): void {
   }
 }
 
-function checkFile(st: Stats): void {
+export function checkDeveloperPrivateFile(st: Stats): void {
   if (!st.isFile() || st.nlink !== 1 ||
     st.uid !== process.getuid!() || (st.mode & 0o077) !== 0 ||
     st.size > 1024 * 1024) throw new DeveloperError("unsafe_session_store");
@@ -137,10 +157,10 @@ export function readDeveloperPrivateInput(file: string): unknown {
   let fd: number | undefined;
   try {
     const target = resolve(file);
-    checkParents(target, false);
+    checkDeveloperPrivateParents(target, false);
     if (lstatSync(target).isSymbolicLink()) throw new DeveloperError("unsafe_session_store");
     fd = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
-    checkFile(fstatSync(fd));
+    checkDeveloperPrivateFile(fstatSync(fd));
     return JSON.parse(readFileSync(fd, "utf8")) as unknown;
   } catch (error) {
     if (error instanceof DeveloperError) throw error;
@@ -167,9 +187,22 @@ export class DeveloperSession {
   }
 
   refresh(path: DeveloperReadPath, values: string[]): void {
+    developerReadUrl(path);
+    this[developerTransportAccess](path, values);
+  }
+
+  [developerTransportAccess](path: DeveloperTransportPath, values?: string[]): string {
     assertDeveloperPlatform();
-    const url = developerReadUrl(path);
-    if (values.length === 0) return;
+    const url = developerTransportUrl(path);
+    if (path.startsWith("account/auth/key/download?") && !path.startsWith(`account/auth/key/download?teamId=${this.teamId}&`)) {
+      throw new DeveloperError("team_mismatch");
+    }
+    if (values === undefined) {
+      const header = this.#jar.getCookieStringSync(url);
+      if (!header) throw new DeveloperError("session_expired");
+      return header;
+    }
+    if (values.length === 0) return "";
     const candidate = CookieJar.deserializeSync(this.#jar.serializeSync()!);
     for (const value of values) {
       try {
@@ -180,28 +213,29 @@ export class DeveloperSession {
       } catch { throw new DeveloperError("invalid_response"); }
     }
     const serialized = encode(this.teamId, candidate);
-    const lock = acquireRefreshLock(this.#file);
+    const lock = acquireDeveloperPrivateLock(this.#file);
     try {
       // A private, non-symlink parent and unchanged original are required even for refresh.
       const original = readDeveloperPrivateInput(this.#file);
       if (JSON.stringify(original) !== this.#snapshot) throw new DeveloperError("unsafe_session_store");
-      writeStore(this.#file, serialized, true);
+      writeDeveloperPrivateStore(this.#file, serialized, true);
     } catch { throw new DeveloperError("unsafe_session_store"); }
-    finally { releaseRefreshLock(lock); }
+    finally { releaseDeveloperPrivateLock(lock); }
     this.#jar = candidate;
     this.#snapshot = serialized;
+    return "";
   }
 }
 
-interface RefreshLock {
+export interface DeveloperPrivateLock {
   path: string;
   fd: number;
 }
 
-function acquireRefreshLock(file: string): RefreshLock {
+export function acquireDeveloperPrivateLock(file: string): DeveloperPrivateLock {
   const path = `${file}.refresh.lock`;
   try {
-    checkParents(path, false);
+    checkDeveloperPrivateParents(path, false);
     return {
       path,
       fd: openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
@@ -212,15 +246,29 @@ function acquireRefreshLock(file: string): RefreshLock {
   }
 }
 
-function releaseRefreshLock(lock: RefreshLock): void {
+export function releaseDeveloperPrivateLock(lock: DeveloperPrivateLock): void {
+  removeDeveloperOwnedFile(lock);
+}
+
+export function verifyDeveloperPrivateLock(lock: DeveloperPrivateLock): void {
+  checkDeveloperPrivateParents(lock.path, false);
+  const acquired = fstatSync(lock.fd);
+  const current = lstatSync(lock.path);
+  checkDeveloperPrivateFile(acquired);
+  checkDeveloperPrivateFile(current);
+  if (current.dev !== acquired.dev || current.ino !== acquired.ino) throw new DeveloperError("unsafe_session_store");
+}
+
+export function syncDeveloperPrivateDirectory(file: string): void {
+  checkDeveloperPrivateParents(file, false);
+  const directory = openSync(dirname(file), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try { fsyncSync(directory); } finally { closeSync(directory); }
+}
+
+export function removeDeveloperOwnedFile(lock: DeveloperPrivateLock): void {
   try {
-    checkParents(lock.path, false);
-    const acquired = fstatSync(lock.fd);
-    const current = lstatSync(lock.path);
     // Keep the acquired descriptor open so its inode cannot be reused by another owner.
-    if (!current.isFile() || current.dev !== acquired.dev || current.ino !== acquired.ino) {
-      throw new DeveloperError("unsafe_session_store");
-    }
+    verifyDeveloperPrivateLock(lock);
     unlinkSync(lock.path);
   } catch { throw new DeveloperError("unsafe_session_store"); }
   finally { closeSync(lock.fd); }
@@ -230,22 +278,36 @@ function encode(teamId: string, jar: CookieJar): string {
   return JSON.stringify({ version: 1, teamId, jar: jar.serializeSync() });
 }
 
-function writeStore(file: string, data: string, replace: boolean): void {
-  checkParents(file, true);
+export function writeDeveloperPrivateStore(file: string, data: string, replace: boolean): void {
+  assertDeveloperPlatform();
+  checkDeveloperPrivateParents(file, true);
+  if (replace) {
+    if (lstatSync(file).isSymbolicLink()) throw new DeveloperError("unsafe_session_store");
+    checkDeveloperPrivateFile(lstatSync(file));
+  }
   // Same-directory atomic publication. Exclusive linking never clobbers an enrollment destination.
   const staging = join(dirname(file), `.developer-session-${randomUUID()}.json`);
   let fd: number | undefined;
+  let acquired: Stats | undefined;
   try {
     fd = openSync(staging, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    acquired = fstatSync(fd);
     writeFileSync(fd, data, "utf8");
     fsyncSync(fd);
     closeSync(fd);
     fd = undefined;
     if (replace) renameSync(staging, file);
     else linkSync(staging, file);
+    syncDeveloperPrivateDirectory(file);
   } finally {
     if (fd !== undefined) closeSync(fd);
-    if (existsSync(staging)) unlinkSync(staging);
+    if (acquired && existsSync(staging)) {
+      const current = lstatSync(staging);
+      if (current.dev !== acquired.dev || current.ino !== acquired.ino || !current.isFile()) {
+        throw new DeveloperError("unsafe_session_store");
+      }
+      unlinkSync(staging);
+    }
   }
 }
 
@@ -256,7 +318,7 @@ export function importDeveloperSession(options: { teamId: string; input: unknown
   const file = resolve(options.sessionFile);
   const serialized = encode(options.teamId, jar);
   try {
-    writeStore(file, serialized, false);
+    writeDeveloperPrivateStore(file, serialized, false);
   } catch (error) {
     if (error instanceof DeveloperError) throw error;
     if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new DeveloperError("session_exists");

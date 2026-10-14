@@ -4,6 +4,9 @@ export { importDeveloperSession, loadDeveloperSession, DeveloperSession } from "
 export type { DeveloperClient, DeveloperClientOptions, DeveloperKeySummary, DeveloperErrorCode } from "./developer.js";
 export type { DeveloperEnrollment, DeveloperEnrollmentCookie } from "./developer-session.js";
 export type { DeveloperCliDependencies } from "./developer-cli.js";
+export { planDeveloperKey, applyDeveloperKey, reconcileDeveloperKey } from "./developer-keys.js";
+export type { DeveloperKeyScope, DeveloperKeyPlanOptions, DeveloperKeyPlanSummary, DeveloperKeyReceipt } from "./developer-keys.js";
+export type { DeveloperLifecycleErrorCode } from "./developer-session.js";
 export {
   AppStoreConnectError,
   createAppStoreConnectClient,

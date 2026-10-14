@@ -339,6 +339,17 @@ describe("private Developer enrollment and refresh", () => {
     expect(existsSync(`${file}.refresh.lock`)).toBe(false);
   });
 
+  it("does not persist response cookies before validating the inspection key schema", async () => {
+    const file = path("invalid-schema-refresh.json");
+    const s = kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: file });
+    const original = readFileSync(file, "utf8");
+    const c = kit.createDeveloperClient({ teamId, session: s, fetch: async () => response({
+      resultCode: 0, keys: [{ ...key, keyId: "invalid" }]
+    }, 200, { "set-cookie": "session=UNVALIDATED; Secure; Path=/" }) });
+    await expect(c.status()).rejects.toMatchObject({ code: "invalid_response" });
+    expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
   it.each(["regular", "symlink"])("fails closed for another owner's or stale %s lock without removing it", async kind => {
     const file = path(`contended-${kind}.json`);
     const s = kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: file });

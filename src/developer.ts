@@ -1,4 +1,5 @@
-import { DeveloperError, DeveloperSession, developerReadUrl, validateDeveloperId, type DeveloperReadPath } from "./developer-session.js";
+import { DeveloperError, DeveloperSession, validateDeveloperId, type DeveloperReadPath } from "./developer-session.js";
+import { createDeveloperTransport, developerRecord as record } from "./developer-transport.js";
 export { DeveloperError } from "./developer-session.js";
 export type { DeveloperErrorCode } from "./developer-session.js";
 
@@ -22,9 +23,6 @@ export interface DeveloperClient {
   };
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 function text(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
 }
@@ -39,48 +37,18 @@ function summary(value: unknown): DeveloperKeySummary {
   return { keyId: value.keyId, keyName: value.keyName, serviceIds, canDownload: value.canDownload, canRevoke: value.canRevoke };
 }
 
-function loginRedirect(location: string | null): boolean {
-  if (!location) return false;
-  try {
-    const url = new URL(location, "https://developer.apple.com/");
-    return url.protocol === "https:" && !url.username && !url.password &&
-      (url.hostname === "idmsa.apple.com" || (url.hostname === "developer.apple.com" && /^\/(login|signin|account)(\/|$)/.test(url.pathname)));
-  } catch { return false; }
-}
-
 export function createDeveloperClient(options: DeveloperClientOptions): DeveloperClient {
   validateDeveloperId(options.teamId);
   if (!(options.session instanceof DeveloperSession)) throw new DeveloperError("invalid_session");
   if (options.session.teamId !== options.teamId) throw new DeveloperError("team_mismatch");
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const transport = createDeveloperTransport(options);
   async function read(path: DeveloperReadPath, fields: Record<string, string>): Promise<DeveloperKeySummary[]> {
-    const cookie = options.session.cookieHeader(path);
-    let response: Response;
-    try {
-      response = await fetcher(developerReadUrl(path), {
-        method: "POST", redirect: "manual", signal: AbortSignal.timeout(15_000),
-        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", cookie },
-        body: new URLSearchParams({ teamId: options.teamId, ...fields })
-      });
-    } catch { throw new DeveloperError("network_error"); }
-    if (response.redirected || (response.url && response.url !== developerReadUrl(path))) throw new DeveloperError("redirect_rejected");
-    if (response.status >= 300 && response.status < 400) {
-      throw new DeveloperError(loginRedirect(response.headers.get("location")) ? "sign_in_required" : "redirect_rejected");
-    }
-    if (response.status === 401) throw new DeveloperError("sign_in_required");
-    if (response.status === 403) throw new DeveloperError("permission_denied");
-    if (response.status !== 200) throw new DeveloperError("http_error");
-    const contentType = response.headers.get("content-type") ?? "";
-    if (/text\/html/i.test(contentType)) throw new DeveloperError("sign_in_required");
-    if (!/^application\/json(?:;|$)/i.test(contentType)) throw new DeveloperError("invalid_response");
-    let data: unknown;
-    try { data = await response.json(); } catch { throw new DeveloperError("invalid_response"); }
-    if (!record(data) || typeof data.resultCode !== "number" || !Number.isSafeInteger(data.resultCode)) throw new DeveloperError("invalid_response");
-    if (data.resultCode === 2100) throw new DeveloperError("agreement_required");
-    if (data.resultCode !== 0) throw new DeveloperError("apple_error");
+    const response = await transport.request(path, { fields });
+    const { data } = response;
+    if (!record(data)) throw new DeveloperError("invalid_response");
     if (!Array.isArray(data.keys) || data.keys.length > 50) throw new DeveloperError("invalid_response");
     const keys = data.keys.map(summary);
-    options.session.refresh(path, response.headers.getSetCookie());
+    response.accept();
     return keys;
   }
   return {
