@@ -507,3 +507,133 @@ Pre-effect refusals use the existing error envelope. An agreement-required
 response remains an explicit manual gate, never authorization to accept terms.
 This includes numeric `2100` in a non-PEM download error body; JSON is never
 accepted as a successful private-key download.
+
+### Existing Services IDs
+
+Services ID inspection and guarded configuration use the same private Developer
+session, pinned transport and durable operation helpers as the key lifecycle.
+These commands operate on **existing** Services IDs only: there is no create,
+delete, generic PATCH, unrelated capability disable, consent-grant or team
+capability operation.
+
+```sh
+apple-distribution-kit developer services get \
+  --team-id TEAM123456 \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --service-id SVC1234567 --identifier org.example.web --json
+
+apple-distribution-kit developer services plan \
+  --team-id TEAM123456 --environment test \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --plan-file "$HOME/.apple-developer-session/service-plan.json" \
+  --config "$HOME/.apple-developer-session/service-desired.json" --json
+
+apple-distribution-kit developer services apply \
+  --team-id TEAM123456 --environment test \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --plan-file "$HOME/.apple-developer-session/service-plan.json" --json
+
+apple-distribution-kit developer services reconcile \
+  --team-id TEAM123456 --environment test \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --plan-file "$HOME/.apple-developer-session/service-plan.json" --json
+```
+
+The owner-only, nonsymlink desired JSON accepts exactly these six properties:
+
+```json
+{
+  "serviceId": "SVC1234567",
+  "identifier": "org.example.web",
+  "primaryAppId": "APP1234567",
+  "primaryAppIdentifier": "org.example.primary",
+  "domains": ["login.example.org"],
+  "returnUrls": ["https://login.example.org/Callback%2FExact?x=%2f"]
+}
+```
+
+Scope comes from the explicit team/environment arguments, never from the config.
+The environment label describes intended scope; it does not provide Apple-side
+isolation. Both resource IDs are Apple's internal IDs; identifiers are separate,
+unprefixed client/bundle identifiers. Inspection validates the exact Services ID,
+team seed, `SERVICES` platform and exact SIWA capability reference, then separately
+reads its associated primary to verify team and identifier. It uses the complete
+parent include graph, not an unsupported leaf capability GET.
+
+Domains and return URLs must be nonempty unique lists (at most 100 each).
+Domains are normalized to lowercase and sorted; URL lists are sorted without
+rewriting callback path/query spelling. Domains must be valid dotted hostnames,
+not IP addresses, wildcards or local/private-use names. Return URLs must be
+absolute HTTPS with an explicitly declared hostname, no userinfo, fragment,
+nondefault port, control characters or malformed escapes. Supplied URLs are
+never fetched. Unknown config fields and unsafe/ambiguous input fail before
+network access.
+
+Planning performs read-only parent/primary requests and exclusively publishes a
+versioned, hashed private plan. The plan binds exact scope, identifiers, desired
+lists and fingerprints of the current and intended complete relevant
+configuration. Apply re-reads those preconditions and the desired primary's
+ownership before any effect. It PATCHes the **parent** JSON API bundle resource,
+retaining parent metadata and unrelated capability enabled states, inputs,
+settings and primary associations. Unrecognized configuration shapes fail
+closed rather than being silently dropped. Display-only input metadata is not
+submitted as configuration.
+
+Private service intents and resource indexes live at
+`$HOME/.apple-distribution-kit/developer-services-operations/<team-id>/`.
+This is a separate resource namespace, using the key lifecycle's shared
+fsynced publication, integrity/index validation, private-directory and owned-lock
+mechanisms. Keep it intact. A pending/uncertain service intent blocks all new
+plans for that service across session clones and environment labels. Completed
+or no-op replay does not erase other pending history.
+
+An already exact configuration produces `noOp: true`; apply verifies it and
+persists completion without PATCH. Otherwise completion requires a fresh parent
+include-graph/primary read confirming the exact requested configuration **and**
+unchanged unrelated capabilities and parent metadata. Unknown HTTP, network,
+body, postcondition or persistence outcomes remain `state: "uncertain"` with no
+automatic PATCH retry. Read-only reconcile can verify the full intended
+postcondition or retain uncertainty; agreement/sign-in failures keep their
+native manual gates. CLI uncertainty is `{ok:false,result:{state:"uncertain",
+...}}` with exit 69. Pre-effect refusals use the existing sanitized error
+envelope. Public outputs contain resource/configuration metadata, never cookies,
+CSRF, raw server objects, creator information or private paths.
+
+The resource-bound library interfaces are:
+
+```ts
+import {
+  getDeveloperService, planDeveloperService,
+  applyDeveloperService, reconcileDeveloperService,
+  type DeveloperServiceGetOptions, type DeveloperServicePlanOptions,
+  type DeveloperServiceScope
+} from "apple-distribution-kit";
+
+const inspection: DeveloperServiceGetOptions = {
+  teamId: "TEAM123456", sessionFile: privateSessionPath,
+  serviceId: "SVC1234567", identifier: "org.example.web"
+};
+await getDeveloperService(inspection); // Promise<DeveloperServiceSummary>
+
+const scope: DeveloperServiceScope = {
+  teamId: inspection.teamId, sessionFile: inspection.sessionFile,
+  environment: "test", planFile: privatePlanPath
+};
+const input: DeveloperServicePlanOptions = {
+  ...scope, serviceId: inspection.serviceId, identifier: inspection.identifier,
+  primaryAppId: "APP1234567", primaryAppIdentifier: "org.example.primary",
+  domains: ["login.example.org"],
+  returnUrls: ["https://login.example.org/Callback%2FExact?x=%2f"]
+};
+await planDeveloperService(input); // Promise<DeveloperServicePlanSummary>
+await applyDeveloperService(scope); // Promise<DeveloperServiceReceipt>
+await reconcileDeveloperService(scope); // Promise<DeveloperServiceReceipt>
+```
+
+All options accept optional injected `fetch` for offline consumers without
+changing the pinned destination/method contracts. Inspection returns
+`teamId`, the six configuration fields and `enabled`. Plan summaries return the
+six configuration fields plus `version:1`, `action:"configure-service"`,
+`operationId`, `teamId`, `environment`, `planHash` and `noOp`. Receipts add
+`state:"completed"|"uncertain"` and optional sanitized `errorCode` /
+`requiresHuman`.

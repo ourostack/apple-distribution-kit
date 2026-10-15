@@ -10,7 +10,7 @@ export type DeveloperReadPath = "account/auth/key/list" | "account/auth/key/get"
 export const developerTransportAccess = Symbol("developerTransportAccess");
 export type DeveloperTransportPath = DeveloperReadPath | "account/auth/key/create" | "account/auth/key/v2/create" |
   "account/auth/key/revoke" | `account/auth/key/download?teamId=${string}&keyId=${string}` |
-  "permissions" | `bundle:${string}`;
+  "permissions" | `bundle:${string}` | `service:${string}` | `service-update:${string}`;
 export type DeveloperErrorCode =
   | "invalid_arguments" | "invalid_session" | "unsafe_session_store" | "session_exists"
   | "session_store_busy"
@@ -74,6 +74,11 @@ export function developerReadUrl(path: DeveloperReadPath): string {
 
 export function developerTransportUrl(path: DeveloperTransportPath): string {
   if (path === "permissions") return "https://developer.apple.com/services-account/checkPermissions";
+  if (/^service(?:-update)?:[A-Z0-9]{10}$/.test(path)) {
+    const id = path.slice(path.indexOf(":") + 1);
+    return `https://developer.apple.com/services-account/v1/bundleIds/${id}` +
+      (path.startsWith("service:") ? "?include=bundleIdCapabilities,bundleIdCapabilities.capability,bundleIdCapabilities.appConsentBundleId" : "");
+  }
   if (/^bundle:[A-Z0-9]{10}$/.test(path)) {
     return `https://developer.apple.com/services-account/v1/bundleIds/${path.slice(7)}?fields[bundleIds]=name,identifier,seedId&include=bundleIdCapabilities.relatedAppConsentBundleIds`;
   }

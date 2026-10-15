@@ -7,6 +7,9 @@ export type { DeveloperCliDependencies } from "./developer-cli.js";
 export { planDeveloperKey, applyDeveloperKey, reconcileDeveloperKey } from "./developer-keys.js";
 export type { DeveloperKeyScope, DeveloperKeyPlanOptions, DeveloperKeyPlanSummary, DeveloperKeyReceipt } from "./developer-keys.js";
 export type { DeveloperLifecycleErrorCode } from "./developer-session.js";
+export { getDeveloperService, planDeveloperService, applyDeveloperService, reconcileDeveloperService } from "./developer-services.js";
+export type { DeveloperServiceGetOptions, DeveloperServiceScope, DeveloperServiceConfiguration,
+  DeveloperServicePlanOptions, DeveloperServiceSummary, DeveloperServicePlanSummary, DeveloperServiceReceipt } from "./developer-services.js";
 export {
   AppStoreConnectError,
   createAppStoreConnectClient,

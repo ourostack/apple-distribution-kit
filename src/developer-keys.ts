@@ -1,9 +1,8 @@
 import {
   constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, openSync,
-  readSync, readdirSync, writeFileSync
+  readSync, writeFileSync
 } from "node:fs";
 import { createHash, createPrivateKey, randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   acquireDeveloperPrivateLock, assertDeveloperPlatform, checkDeveloperPrivateFile, checkDeveloperPrivateParents,
@@ -13,6 +12,8 @@ import {
 } from "./developer-session.js";
 import { createDeveloperTransport, developerRecord as record, type DeveloperTransport } from "./developer-transport.js";
 import type { RequiresHuman } from "./plan.js";
+import { canonical, digest, validHash, uuid, directory, safeBoundary,
+  saveOperation as savePrivateOperation, allOperations as allPrivateOperations } from "./developer-private-operations.js";
 
 const SIWA = "APPLE_ID_AUTH_KEY_CONFIGURATION";
 type Action = "create" | "revoke" | "download";
@@ -105,20 +106,6 @@ interface Operation {
 
 function text(value: unknown, max = 256): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
-}
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (record(value)) return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonical(value[k])}`).join(",")}}`;
-  return JSON.stringify(value);
-}
-function digest(value: unknown): string {
-  return createHash("sha256").update(canonical(value)).digest("hex");
-}
-function validHash(value: unknown): value is string {
-  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
-}
-function uuid(value: unknown): value is string {
-  return typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 }
 function validatePrimary(value: Primary, teamId: string): void {
   validateDeveloperId(value.primaryAppId);
@@ -292,14 +279,6 @@ function fingerprint(scope: Primary & { teamId: string }, binding?: Binding, ver
   return digest({ teamId: scope.teamId, primaryAppId: scope.primaryAppId, primaryAppIdentifier: scope.primaryAppIdentifier,
     ...(binding ? { binding } : {}), ...(version ? { apiVersion: version } : {}) });
 }
-function directory(teamId: string): string {
-  assertDeveloperPlatform();
-  const base = join(homedir(), ".apple-distribution-kit");
-  for (const dir of [base, join(base, "developer-operations"), join(base, "developer-operations", teamId)]) {
-    checkDeveloperPrivateParents(join(dir, "placeholder"), true);
-  }
-  return join(base, "developer-operations", teamId);
-}
 function resource(action: Action, keyName: string, keyId?: string): string {
   return action === "create" ? `name:${keyName}` : `key:${keyId}`;
 }
@@ -367,25 +346,7 @@ function readOperation(file: string, teamId: string): Operation {
   return op;
 }
 function allOperations(dir: string, teamId: string): Operation[] {
-  const entries = readdirSync(dir);
-  const files = entries.filter(name => /^[a-f0-9-]{36}\.json$/.test(name));
-  if (files.length > 10_000) throw new DeveloperError("invalid_operation");
-  const ops = files.map(file => readOperation(join(dir, file), teamId));
-  const indexes = entries.filter(name => /^[a-f0-9]{64}\.index\.json$/.test(name));
-  if (indexes.length > 10_000) throw new DeveloperError("invalid_operation");
-  for (const name of indexes) {
-    const index = readDeveloperPrivateInput(join(dir, name));
-    if (!record(index) || index.version !== 1 || !uuid(index.operationId) || !validHash(index.planHash) || !text(index.resource, 300)) {
-      throw new DeveloperError("invalid_operation");
-    }
-    const op = ops.find(o => o.operationId === index.operationId);
-    if (!op || op.resource !== index.resource || op.planHash !== index.planHash ||
-      name !== `${digest(index.resource)}.index.json` ||
-      canonical(index) !== canonical({ version: 1, resource: op.resource, operationId: op.operationId, planHash: op.planHash })) {
-      throw new DeveloperError("invalid_operation");
-    }
-  }
-  return ops;
+  return allPrivateOperations(dir, file => readOperation(file, teamId));
 }
 function checkPending(dir: string, plan: { action: Action; keyName: string; keyId?: string; teamId: string }, except?: string): void {
   for (const op of allOperations(dir, plan.teamId)) {
@@ -396,13 +357,11 @@ function checkPending(dir: string, plan: { action: Action; keyName: string; keyI
   }
 }
 function saveOperation(dir: string, operation: Omit<Operation, "integrity">, replace: boolean): Operation {
-  const value: Operation = { ...operation, integrity: digest(operation) };
-  try { writeDeveloperPrivateStore(operationFile(dir, operation.operationId), canonical(value), replace); }
+  try { return savePrivateOperation(dir, operation, replace); }
   catch (error) {
     if (error instanceof DeveloperError) throw error;
     throw new DeveloperError("unsafe_session_store");
   }
-  return value;
 }
 function updateOperation(dir: string, op: Operation, fields: Partial<Pick<Operation, "state" | "receipt" | "recoveryFile">>): Operation {
   const { integrity: _integrity, ...contents } = op;
@@ -649,14 +608,6 @@ async function reconcileKey(options: DeveloperKeyScope): Promise<DeveloperKeyRec
     catch (error) { return uncertainReceipt(plan, error); }
     return completed;
   } finally { releaseDeveloperPrivateLock(lock); }
-}
-
-async function safeBoundary<T>(run: () => Promise<T>): Promise<T> {
-  try { return await run(); }
-  catch (error) {
-    if (error instanceof DeveloperError) throw error;
-    throw new DeveloperError("unsafe_session_store");
-  }
 }
 
 /** Read-only vendor planning plus exclusive private plan publication. */

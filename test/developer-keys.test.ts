@@ -368,7 +368,7 @@ describe("guarded SIWA lifecycle", () => {
     const s = setup(); await s.plan();
     const moduleDirectory = path("worker-modules");
     mkdirSync(moduleDirectory, { mode: 0o700 });
-    for (const source of ["developer-keys", "developer-session", "developer-transport", "plan"]) {
+    for (const source of ["developer-keys", "developer-private-operations", "developer-session", "developer-transport", "plan"]) {
       const output = join(moduleDirectory, `${source}.js`);
       recordResource(output);
       writeFileSync(output, transpileModule(readFileSync(join(process.cwd(), "src", `${source}.ts`), "utf8"), {

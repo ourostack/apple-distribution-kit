@@ -27,7 +27,7 @@ function loginRedirect(location: string | null): boolean {
 
 export interface DeveloperTransport {
   request(path: DeveloperTransportPath, options: {
-    method?: "POST" | "GET";
+    method?: "POST" | "GET" | "PATCH";
     fields?: Record<string, string>;
     json?: unknown;
     csrf?: { csrf: string; csrf_ts: string };
@@ -46,11 +46,16 @@ export function createDeveloperTransport(options: {
     async request(path, input) {
       const url = developerTransportUrl(path);
       const cookie = options.session[developerTransportAccess](path);
-      const bundle = path.startsWith("bundle:");
+      const service = path.startsWith("service:") || path.startsWith("service-update:");
+      const bundle = path.startsWith("bundle:") || service;
+      if ((input.method === "PATCH") !== path.startsWith("service-update:")) throw new DeveloperError("invalid_arguments");
       const headers: Record<string, string> = { accept: input.binary ? "application/octet-stream" : "application/json", cookie };
       if (input.method !== "GET") headers["content-type"] = bundle ? "application/vnd.api+json" :
         input.json === undefined ? "application/x-www-form-urlencoded" : "application/json";
-      if (bundle) Object.assign(headers, { "X-HTTP-Method-Override": "GET", "X-Requested-With": "XMLHttpRequest" });
+      if (bundle) {
+        headers["X-Requested-With"] = "XMLHttpRequest";
+        if (input.method !== "PATCH") headers["X-HTTP-Method-Override"] = "GET";
+      }
       if (input.csrf) {
         if (!/^[\x21-\x7e]{1,1024}$/.test(input.csrf.csrf) || !/^[0-9]{1,32}$/.test(input.csrf.csrf_ts)) {
           throw new DeveloperError("invalid_response");
@@ -124,6 +129,10 @@ export function createDeveloperTransport(options: {
         try { data = JSON.parse(buffer.toString("utf8")) as unknown; }
         catch { throw new DeveloperError("invalid_response"); }
         if (!bundle) developerApiResult(data);
+        else if (developerRecord(data) && "resultCode" in data) {
+          developerApiResult(data);
+          throw new DeveloperError("invalid_response");
+        }
       }
       let accepted = false;
       return {
