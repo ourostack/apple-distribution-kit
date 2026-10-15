@@ -342,14 +342,16 @@ export function loadDeveloperSession(options: { teamId: string; sessionFile: str
   const file = resolve(options.sessionFile);
   const stored = readDeveloperPrivateInput(file);
   if (!record(stored) || stored.teamId !== options.teamId) throw new DeveloperError("team_mismatch");
-  if (stored.version !== 1 || !record(stored.jar)) throw new DeveloperError("invalid_session");
+  if (stored.version !== 1 || !record(stored.jar) || !Array.isArray(stored.jar.cookies)) throw new DeveloperError("invalid_session");
   try {
+    for (const value of stored.jar.cookies) {
+      if (!record(value)) throw new DeveloperError("invalid_session");
+      const cookie = Cookie.fromJSON(value)!;
+      // Reject raw fields the maintained deserializer would silently discard or coerce.
+      if (Object.entries(value).some(([key, raw]) => JSON.stringify(Reflect.get(cookie, key)) !== JSON.stringify(raw)) ||
+        !eligible(cookie, true)) throw new DeveloperError("invalid_session");
+    }
     const jar = CookieJar.deserializeSync(JSON.stringify(stored.jar));
-    const all = jar.serializeSync()!.cookies;
-    if (all.some(value => {
-      const cookie = Cookie.fromJSON(value);
-      return !cookie || !eligible(cookie, true);
-    })) throw new DeveloperError("invalid_session");
     return new DeveloperSession(options.teamId, jar, file, JSON.stringify(stored));
   } catch { throw new DeveloperError("invalid_session"); }
 }

@@ -591,9 +591,9 @@ async function reconcileKey(options: DeveloperKeyScope): Promise<DeveloperKeyRec
     const op = existingOperation(dir, plan);
     if (!op) throw new DeveloperError("invalid_operation");
     if (op.state === "completed" || plan.action === "download") return replay(plan, op);
-    const t = transport(options);
     let completed: DeveloperKeyReceipt;
     try {
+      const t = transport(options);
       await primaryRead(t, plan);
       if (plan.action === "create") {
         const key = await createdKey(t, plan);

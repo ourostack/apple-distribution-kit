@@ -40,11 +40,12 @@ function summary(value: unknown): DeveloperKeySummary {
 export function createDeveloperClient(options: DeveloperClientOptions): DeveloperClient {
   validateDeveloperId(options.teamId);
   const transport = createDeveloperTransport(options);
-  async function read(path: DeveloperReadPath, fields: Record<string, string>): Promise<DeveloperKeySummary[]> {
+  async function read(path: DeveloperReadPath, fields: Record<string, string>, keyId?: string): Promise<DeveloperKeySummary[]> {
     const response = await transport.request(path, { fields });
     const data = response.data as Record<string, unknown>;
     if (!Array.isArray(data.keys) || data.keys.length > 50) throw new DeveloperError("invalid_response");
     const keys = data.keys.map(summary);
+    if (keyId !== undefined && (keys.length !== 1 || keys[0]!.keyId !== keyId)) throw new DeveloperError("invalid_response");
     response.accept();
     return keys;
   }
@@ -56,8 +57,7 @@ export function createDeveloperClient(options: DeveloperClientOptions): Develope
     keys: {
       async get(keyId) {
         validateDeveloperId(keyId);
-        const keys = await read("account/auth/key/get", { keyId });
-        if (keys.length !== 1 || keys[0]!.keyId !== keyId) throw new DeveloperError("invalid_response");
+        const keys = await read("account/auth/key/get", { keyId }, keyId);
         return keys[0]!;
       },
       async list() {

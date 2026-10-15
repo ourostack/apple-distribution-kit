@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
+import { CookieJar } from "tough-cookie";
 import { DeveloperError, type CliDependencies, type DeveloperClient, type DeveloperEnrollment, type DeveloperErrorCode, type DeveloperSession } from "../src/index.js";
 import * as kit from "../src/index.js";
 
@@ -95,8 +96,25 @@ describe("Developer read-only transport", () => {
 
   it("rejects wrong-ID and multiple-key get results", async () => {
     for (const keys of [[{ ...key, keyId: "ZZZ123DE45" }], [key, key], []]) {
-      await expect(client(async () => response({ resultCode: 0, keys })).keys.get("ABC123DE45")).rejects.toMatchObject({ code: "invalid_response" });
+      const file = path(`exact-key-refresh-${resources.length}.json`);
+      const s = kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: file });
+      const before = readFileSync(file, "utf8");
+      const c = kit.createDeveloperClient({ teamId, session: s, fetch: async () => response(
+        { resultCode: 0, keys }, 200, { "set-cookie": "session=UNVALIDATED; Secure; Path=/" }
+      ) });
+      await expect(c.keys.get("ABC123DE45")).rejects.toMatchObject({ code: "invalid_response" });
+      expect(readFileSync(file, "utf8")).toBe(before);
     }
+  });
+
+  it("accepts eligible response cookies after exact-key identity validation", async () => {
+    const file = path("valid-exact-key-refresh.json");
+    const s = kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: file });
+    const c = kit.createDeveloperClient({ teamId, session: s, fetch: async () => response(
+      { resultCode: 0, keys: [key] }, 200, { "set-cookie": "session=VERIFIED; Secure; Path=/" }
+    ) });
+    expect(await c.keys.get(key.keyId)).toMatchObject({ keyId: key.keyId });
+    expect(kit.loadDeveloperSession({ teamId, sessionFile: file }).cookieHeader("account/auth/key/get")).toContain("session=VERIFIED");
   });
 
   it("rejects invalid key and team syntax before transport", async () => {
@@ -275,6 +293,46 @@ describe("private Developer enrollment and refresh", () => {
     }
   });
 
+  it.each([false, true])("SDK-R1 rejects discarded raw cookie rows before library/CLI fetch (valid survivor: %s)", async survivor => {
+    const file = path(`discarded-cookie-${survivor}.json`);
+    kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: file });
+    const stored = JSON.parse(readFileSync(file, "utf8"));
+    stored.jar.cookies = [...(survivor ? stored.jar.cookies : []), null];
+    writeFileSync(file, JSON.stringify(stored));
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => response({ resultCode: 0, keys: [] }));
+    let error: unknown;
+    try {
+      await kit.createDeveloperClient({ teamId, session: kit.loadDeveloperSession({ teamId, sessionFile: file }), fetch }).status();
+    } catch (caught) { error = caught; }
+    expect(error).toMatchObject({ code: "invalid_session" });
+    expect((error as DeveloperError).requiresHuman).toBeUndefined();
+    expect(JSON.stringify(error)).not.toContain(secret);
+    let output = "";
+    const cli = kit.createCli({ stdout: v => { output += v; }, stderr: v => { output += v; } }, { developer: { fetch } });
+    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(69);
+    expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code: "invalid_session" } });
+    expect(output).not.toMatch(/requiresHuman|COOKIE_SECRET/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing-array", "object-array", "string-row", "lossy-value", "lossy-httpOnly", "lossy-date", "unknown-field"])(
+    "SDK-R1 refuses malformed serialized cookie structure %s before normalization", kind => {
+      const file = path(`raw-cookie-${kind}.json`);
+      kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: file });
+      const stored = JSON.parse(readFileSync(file, "utf8"));
+      if (kind === "missing-array") delete stored.jar.cookies;
+      if (kind === "object-array") stored.jar.cookies = {};
+      if (kind === "string-row") stored.jar.cookies = [JSON.stringify(stored.jar.cookies[0])];
+      if (kind === "lossy-value") stored.jar.cookies[0].value = 123;
+      if (kind === "lossy-httpOnly") stored.jar.cookies[0].httpOnly = "true";
+      if (kind === "lossy-date") stored.jar.cookies[0].expires = "invalid-date";
+      if (kind === "unknown-field") stored.jar.cookies[0].unexpected = secret;
+      writeFileSync(file, JSON.stringify(stored));
+      expect(() => kit.loadDeveloperSession({ teamId, sessionFile: file }))
+        .toThrowError(expect.objectContaining({ code: "invalid_session", requiresHuman: undefined }));
+    }
+  );
+
   it("does not serialize a session's cookies through JSON", () => {
     expect(JSON.stringify(session())).not.toContain(secret);
   });
@@ -313,6 +371,33 @@ describe("private Developer enrollment and refresh", () => {
     const c = kit.createDeveloperClient({ teamId, session: s, fetch: async () => response({ resultCode: 0, keys: [] }, 200, { "set-cookie": "session=gone; Domain=.apple.com; Max-Age=0; Path=/; Secure" }) });
     await c.status();
     await expect(c.status()).rejects.toMatchObject({ code: "session_expired", requiresHuman: { type: "requiresHuman" } });
+  });
+
+  it.each(["secure-deletion", "empty-after-deletion", "actual-expiration"])("SDK-R1 preserves genuine stored %s sign-in gates", async kind => {
+    const file = path(`genuine-expired-${kind}.json`);
+    const s = kit.importDeveloperSession({ teamId, input: enrollment(), sessionFile: file });
+    if (kind !== "actual-expiration") {
+      await kit.createDeveloperClient({ teamId, session: s, fetch: async () => response(
+        { resultCode: 0, keys: [] }, 200, { "set-cookie": "session=gone; Domain=.apple.com; Max-Age=0; Path=/; Secure" }
+      ) }).status();
+      if (kind === "empty-after-deletion") {
+        const stored = JSON.parse(readFileSync(file, "utf8"));
+        const jar = CookieJar.deserializeSync(stored.jar);
+        expect(jar.getCookieStringSync("https://developer.apple.com/services-account/QH65B2/")).toBe("");
+        stored.jar = jar.serializeSync();
+        expect(stored.jar.cookies).toEqual([]);
+        writeFileSync(file, JSON.stringify(stored));
+      }
+    } else {
+      const stored = JSON.parse(readFileSync(file, "utf8"));
+      stored.jar.cookies[0].expires = new Date(0).toISOString();
+      writeFileSync(file, JSON.stringify(stored));
+    }
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const loaded = kit.loadDeveloperSession({ teamId, sessionFile: file });
+    await expect(kit.createDeveloperClient({ teamId, session: loaded, fetch }).status())
+      .rejects.toMatchObject({ code: "session_expired", requiresHuman: { type: "requiresHuman" } });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it.each([

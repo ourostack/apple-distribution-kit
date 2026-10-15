@@ -261,8 +261,9 @@ export needs Apple's servers.
 The separate `developer` command family uses an explicitly enrolled Apple Developer
 web session, **not** App Store Connect JWT credentials. Inspection stays read-only;
 separate private plan/apply/reconcile commands support scoped Sign in with Apple
-key creation, revocation and one-time download. This layer cannot change Services
-IDs or accept agreements.
+key creation, revocation and one-time download. A separately guarded lane configures
+existing Services IDs as documented below; Services ID creation/deletion, arbitrary
+PATCH and agreement acceptance remain excluded.
 Existing ASC and signing commands are unchanged. Node 22 or newer is required.
 This Developer credential-store milestone supports **macOS and Linux only**.
 Windows and other platforms fail closed with `unsupported_platform` before

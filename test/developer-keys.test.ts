@@ -471,6 +471,86 @@ describe("guarded SIWA lifecycle", () => {
     expect(effects(s)).toHaveLength(1);
   });
 
+  it.each((["create", "revoke"] as const).flatMap(action =>
+    (["missing", "malformed", "unsafe", "wrong-team"] as const).map(kind => ({ action, kind }))
+  ))("SDK-R2 preserves pending $action identity across $kind session failure and read-only recovery", async ({ action, kind }) => {
+    const s = setup(action);
+    const plan = await s.plan();
+    const rename = fs.renameSync;
+    const failure = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      if (String(to).includes("/developer-operations/") && String(to).endsWith(`${plan.operationId}.json`)) throw new Error(secret);
+      rename(from, to);
+    });
+    syncBuiltinESMExports();
+    try { expect(await kit.applyDeveloperKey(s.common)).toMatchObject({ state: "uncertain" }); }
+    finally { failure.mockRestore(); syncBuiltinESMExports(); }
+    const op = operations().find(o => o.value.operationId === plan.operationId)!;
+    expect(op.value.state).toBe("pending");
+    const originalIntent = readFileSync(op.file, "utf8");
+    const backup = path("retained-fake-session.json");
+    renameSync(s.common.sessionFile, backup);
+    if (kind !== "missing") {
+      writeFileSync(s.common.sessionFile, kind === "malformed" ? "{" : readFileSync(backup, "utf8"), { mode: 0o600 });
+      if (kind === "unsafe") chmodSync(s.common.sessionFile, 0o644);
+      if (kind === "wrong-team") {
+        const stored = JSON.parse(readFileSync(s.common.sessionFile, "utf8"));
+        stored.teamId = "OTHER12345";
+        writeFileSync(s.common.sessionFile, JSON.stringify(stored));
+      }
+    }
+    const code = kind === "unsafe" ? "unsafe_session_store" : kind === "wrong-team" ? "team_mismatch" : "invalid_session";
+    const count = s.seen.length;
+    const result = await kit.reconcileDeveloperKey(s.common);
+    expect(result).toMatchObject({ ...plan, state: "uncertain", errorCode: code });
+    expect(result.requiresHuman).toBeUndefined();
+    let output = "";
+    const cli = kit.createCli({ stdout: v => { output += v; }, stderr: v => { output += v; } }, { developer: { fetch: s.common.fetch } });
+    expect(await cli(["developer", "keys", "reconcile", "--team-id", teamId, "--environment", "test",
+      "--session-file", s.common.sessionFile, "--plan-file", s.common.planFile, "--json"])).toBe(69);
+    expect(JSON.parse(output)).toEqual({ ok: false, result });
+    expect(output).not.toMatch(/requiresHuman|NEVER_EXPOSE/);
+    expect(output).not.toContain(s.common.sessionFile);
+    expect(s.seen).toHaveLength(count);
+    expect(readFileSync(op.file, "utf8")).toBe(originalIntent);
+    expect(await kit.applyDeveloperKey(s.common)).toMatchObject({ operationId: plan.operationId, state: "uncertain" });
+    renameSync(backup, s.common.sessionFile);
+    const completed = await kit.reconcileDeveloperKey(s.common);
+    expect(completed).toMatchObject({ ...plan, state: "completed" });
+    expect(await kit.applyDeveloperKey(s.common)).toEqual(completed);
+    expect(effects(s)).toHaveLength(1);
+  });
+
+  it.each(["missing", "malformed", "unsafe", "wrong-team"] as const)(
+    "SDK-R2 retains ordinary %s session refusal before an intent exists", async kind => {
+      const s = setup();
+      await s.plan();
+      const backup = path("retained-pre-intent-fake-session.json");
+      renameSync(s.common.sessionFile, backup);
+      if (kind !== "missing") {
+        writeFileSync(s.common.sessionFile, kind === "malformed" ? "{" : readFileSync(backup, "utf8"), { mode: 0o600 });
+        if (kind === "unsafe") chmodSync(s.common.sessionFile, 0o644);
+        if (kind === "wrong-team") {
+          const stored = JSON.parse(readFileSync(s.common.sessionFile, "utf8"));
+          stored.teamId = "OTHER12345";
+          writeFileSync(s.common.sessionFile, JSON.stringify(stored));
+        }
+      }
+      const count = s.seen.length;
+      const code = kind === "unsafe" ? "unsafe_session_store" : kind === "wrong-team" ? "team_mismatch" : "invalid_session";
+      await expect(kit.applyDeveloperKey(s.common)).rejects.toMatchObject({ code, requiresHuman: undefined });
+      let output = "";
+      const cli = kit.createCli({ stdout: v => { output += v; }, stderr: v => { output += v; } }, { developer: { fetch: s.common.fetch } });
+      expect(await cli(["developer", "keys", "apply", "--team-id", teamId, "--environment", "test",
+        "--session-file", s.common.sessionFile, "--plan-file", s.common.planFile, "--json"])).toBe(69);
+      expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code } });
+      expect(JSON.parse(output).result).toBeUndefined();
+      expect(output).not.toMatch(/requiresHuman|NEVER_EXPOSE/);
+      expect(s.seen).toHaveLength(count);
+      expect(operations().some(o => o.value.planFile === s.common.planFile)).toBe(false);
+      renameSync(backup, s.common.sessionFile);
+    }
+  );
+
   it.each(["http", "body", "wrong-primary", "postcondition"])("blocks malformed/failed create %s without retry", async failure => {
     const s = setup(); await s.plan();
     s.setEffect(async () => {
