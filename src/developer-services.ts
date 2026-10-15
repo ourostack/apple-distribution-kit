@@ -96,6 +96,38 @@ function text(v: unknown, max = 4096): v is string {
 function keys(v: Record<string, unknown>, allowed: string[]): void {
   if (Object.keys(v).some(k => !allowed.includes(k))) throw new DeveloperError("invalid_response");
 }
+type MetadataRule = "string" | "boolean" | "integer" | "nullable-string" | "bundle" | "BUNDLE" | null | false;
+function metadata(v: Record<string, unknown>, configuration: string[], fields: Record<string, MetadataRule>): void {
+  keys(v, [...configuration, ...Object.keys(fields)]);
+  for (const [name, rule] of Object.entries(fields)) {
+    const value = v[name];
+    if (value === undefined) continue;
+    const valid = rule === "string" ? typeof value === "string" :
+      rule === "boolean" ? typeof value === "boolean" :
+        rule === "integer" ? Number.isSafeInteger(value) && (value as number) >= 0 :
+          rule === "nullable-string" ? value === null || typeof value === "string" : value === rule;
+    if (!valid) throw new DeveloperError("invalid_response");
+  }
+}
+// Navigation-only relationships are not resource linkage. Never follow or submit their URLs.
+function navigation(value: unknown, allowData = false): void {
+  if (!record(value) || (!allowData && value.meta === undefined && value.links === undefined)) throw new DeveloperError("invalid_response");
+  keys(value, allowData ? ["data", "meta", "links"] : ["meta", "links"]);
+  if (value.meta !== undefined) {
+    if (!record(value.meta) || !record(value.meta.paging)) throw new DeveloperError("invalid_response");
+    keys(value.meta, ["paging"]);
+    const paging = value.meta.paging;
+    keys(paging, ["total", "limit"]);
+    if (!Number.isSafeInteger(paging.total) || (paging.total as number) < 0 ||
+      !Number.isSafeInteger(paging.limit) || (paging.limit as number) < 0) throw new DeveloperError("invalid_response");
+    if (!allowData && (paging.total as number) > 0) throw new DeveloperError("invalid_response");
+  }
+  if (value.links !== undefined) {
+    if (!record(value.links) || Object.keys(value.links).length === 0) throw new DeveloperError("invalid_response");
+    keys(value.links, ["self", "related"]);
+    if (Object.values(value.links).some(link => typeof link !== "string")) throw new DeveloperError("invalid_response");
+  }
+}
 function exact(v: object, allowed: string[]): void {
   if (Object.keys(v).some(k => !allowed.includes(k))) throw new DeveloperError("invalid_arguments");
 }
@@ -156,7 +188,7 @@ function link(value: unknown, type: string): Link {
 }
 function relation(value: unknown, type: string, nullable = false): { data: Link | null } {
   if (!record(value)) throw new DeveloperError("invalid_response");
-  keys(value, ["data", "links"]);
+  navigation(value, true);
   return { data: nullable && value.data === null ? null : link(value.data, type) };
 }
 function inputs(value: unknown): Input[] {
@@ -164,7 +196,9 @@ function inputs(value: unknown): Input[] {
   const seen = new Set<string>();
   return value.map(v => {
     if (!record(v) || !text(v.key, 128) || seen.has(v.key) || !Array.isArray(v.values)) throw new DeveloperError("invalid_response");
-    keys(v, ["key", "values", "name", "label", "description", "limit", "min", "max", "required", "type"]);
+    metadata(v, ["key", "values"], { name: "string", label: "string", description: "string", limit: "integer",
+      min: "integer", max: "integer", required: "boolean", type: "string", allowedInstances: "string",
+      minInstances: "integer", displayOrder: "integer", maxLimit: "integer" });
     seen.add(v.key);
     return { key: v.key, values: v.values.map(item => {
       if (!record(item) || typeof item.value !== "string" || item.value.length > 4096 || /[\x00-\x1f\x7f]/.test(item.value)) {
@@ -188,14 +222,16 @@ function settings(value: unknown): unknown {
     }) };
   });
 }
-function capability(raw: unknown, id: string): Capability {
+function capability(raw: unknown, id: string): { configuration: Capability; editable: boolean } {
   if (!record(raw) || raw.type !== "bundleIdCapabilities" || raw.id !== id ||
     !record(raw.attributes) || typeof raw.attributes.enabled !== "boolean" || !record(raw.relationships)) {
     throw new DeveloperError("invalid_response");
   }
   keys(raw, ["type", "id", "attributes", "relationships", "links"]);
-  keys(raw.attributes, ["enabled", "inputs", "settings"]);
-  keys(raw.relationships, ["capability", "appConsentBundleId"]);
+  metadata(raw.attributes, ["enabled", "inputs", "settings"], { ownerType: "BUNDLE", editable: "boolean", responseId: "string" });
+  for (const [name, value] of Object.entries(raw.relationships)) {
+    if (name !== "capability" && name !== "appConsentBundleId") navigation(value);
+  }
   const cap = relation(raw.relationships.capability, "capabilities").data!;
   const result: Capability = { type: "bundleIdCapabilities", attributes: { enabled: raw.attributes.enabled,
     ...(raw.attributes.inputs === undefined ? {} : { inputs: inputs(raw.attributes.inputs) }),
@@ -203,7 +239,7 @@ function capability(raw: unknown, id: string): Capability {
     relationships: { capability: { data: cap },
       ...(raw.relationships.appConsentBundleId === undefined ? {} :
         { appConsentBundleId: relation(raw.relationships.appConsentBundleId, "bundleIds", true) }) } };
-  return result;
+  return { configuration: result, editable: raw.attributes.editable !== false };
 }
 function siwa(snapshot: Snapshot): Capability {
   return snapshot.relationships.bundleIdCapabilities.data.find(r => r.relationships.capability.data.id === SIWA)!;
@@ -224,7 +260,7 @@ async function primaryRead(t: DeveloperTransport, teamId: string, id: string, ex
   return b.attributes.identifier;
 }
 async function read(t: DeveloperTransport, options: { teamId: string; serviceId: string; identifier: string }): Promise<{
-  snapshot: Snapshot; summary: DeveloperServiceSummary; csrf: { csrf: string; csrf_ts: string };
+  snapshot: Snapshot; summary: DeveloperServiceSummary; csrf: { csrf: string; csrf_ts: string }; editable: boolean;
 }> {
   const response = await t.request(`service:${options.serviceId}`, { json: { teamId: options.teamId } });
   const raw = response.data;
@@ -235,18 +271,27 @@ async function read(t: DeveloperTransport, options: { teamId: string; serviceId:
     !record(b.relationships) || !record(b.relationships.bundleIdCapabilities) ||
     !Array.isArray(b.relationships.bundleIdCapabilities.data) || !Array.isArray(raw.included)) throw new DeveloperError("resource_mismatch");
   keys(b, ["type", "id", "attributes", "relationships", "links"]);
-  keys(b.attributes, ["name", "identifier", "seedId", "platform"]);
-  keys(b.relationships, ["bundleIdCapabilities"]);
-  keys(b.relationships.bundleIdCapabilities, ["data", "links"]);
+  metadata(b.attributes, ["name", "identifier", "seedId", "platform"], {
+    dateModified: "string", dateCreated: "string", platformName: "string", responseId: "string",
+    deploymentDataNotice: "nullable-string", bundleType: "bundle", wildcard: false,
+    entitlementGroupName: null, bundleIdCapabilitiesSettingOption: null
+  });
+  for (const [name, value] of Object.entries(b.relationships)) {
+    if (name !== "bundleIdCapabilities") navigation(value);
+  }
+  navigation(b.relationships.bundleIdCapabilities, true);
   const ids = new Set<string>();
   const included = raw.included;
+  let editable = true;
   const caps = b.relationships.bundleIdCapabilities.data.map(ref => {
     const identity = link(ref, "bundleIdCapabilities");
     if (ids.has(identity.id)) throw new DeveloperError("invalid_response");
     ids.add(identity.id);
     const rows = included.filter(v => record(v) && v.type === "bundleIdCapabilities" && v.id === identity.id);
     if (rows.length !== 1) throw new DeveloperError("invalid_response");
-    const cap = capability(rows[0], identity.id);
+    const parsed = capability(rows[0], identity.id);
+    const cap = parsed.configuration;
+    if (cap.relationships.capability.data.id === SIWA) editable = parsed.editable;
     if (identity.id !== `${options.serviceId}_${cap.relationships.capability.data.id}`) throw new DeveloperError("resource_mismatch");
     return cap;
   }).sort((a, b) => a.relationships.capability.data.id.localeCompare(b.relationships.capability.data.id));
@@ -261,7 +306,7 @@ async function read(t: DeveloperTransport, options: { teamId: string; serviceId:
   const primaryAppId = cap.relationships.appConsentBundleId.data.id;
   const primaryAppIdentifier = await primaryRead(t, options.teamId, primaryAppId);
   response.accept();
-  return { snapshot, summary: { teamId: options.teamId, serviceId: options.serviceId, identifier: options.identifier,
+  return { snapshot, editable, summary: { teamId: options.teamId, serviceId: options.serviceId, identifier: options.identifier,
     enabled: cap.attributes.enabled, primaryAppId, primaryAppIdentifier,
     domains: listValues(cap, DOMAIN), returnUrls: listValues(cap, RETURN) },
     csrf: { csrf: response.headers.get("csrf") ?? "", csrf_ts: response.headers.get("csrf_ts") ?? "" } };
@@ -373,6 +418,7 @@ export function planDeveloperService(options: DeveloperServicePlanOptions): Prom
       await primaryRead(t, options.teamId, config.primaryAppId, config.primaryAppIdentifier);
       const before = fingerprint(current.snapshot);
       const after = fingerprint(target(current.snapshot, config));
+      if (before !== after && !current.editable) throw new DeveloperError("permission_denied");
       const contents = { version: 1 as const, action: "configure-service" as const, operationId: randomUUID(),
         teamId: options.teamId, environment: options.environment, ...config,
         fingerprint: before, postcondition: after, noOp: before === after };
@@ -402,6 +448,7 @@ async function execute(options: DeveloperServiceScope, reconcile: boolean): Prom
         if (fingerprint(current.snapshot) !== plan.postcondition) throw new DeveloperError("resource_mismatch");
       } else {
         if (fingerprint(current.snapshot) !== plan.fingerprint) throw new DeveloperError("stale_plan");
+        if (!plan.noOp && !current.editable) throw new DeveloperError("permission_denied");
         const intended = target(current.snapshot, plan);
         if (fingerprint(intended) !== plan.postcondition) throw new DeveloperError("invalid_plan");
         if (!plan.noOp && (!current.csrf.csrf || !current.csrf.csrf_ts)) throw new DeveloperError("invalid_response");

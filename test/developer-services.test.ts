@@ -7,6 +7,7 @@ import { createCli } from "../src/cli-core.js";
 import { createDeveloperTransport } from "../src/developer-transport.js";
 import { developerTransportUrl } from "../src/developer-session.js";
 import { canonical, digest } from "../src/developer-private-operations.js";
+import { observedDeveloperService } from "./developer-services-wire-fixture.js";
 
 const home = vi.hoisted(() => `${process.cwd()}/node_modules/.cache/developer-services-${Date.now()}-${process.pid}`);
 const authority = vi.hoisted(() => ({ current: "" }));
@@ -732,5 +733,199 @@ describe("existing Services ID guarded configuration", () => {
     const planFile = file("private plan.json");
     const plan = await s.plan({ sessionFile, planFile });
     expect(await kit.applyDeveloperService({ ...s.scope, sessionFile, planFile })).toEqual({ ...plan, state: "completed" });
+  });
+
+  it("inspects the observed JSON API shape without treating display/navigation metadata as configuration", async () => {
+    const s = setup();
+    const observed = observedDeveloperService();
+    s.setCurrent(observed as unknown as Parent);
+    s.setPrimary({ data: observed.included[2] });
+    expect(await s.get()).toEqual({ teamId, serviceId, identifier, enabled: true, primaryAppId, primaryAppIdentifier,
+      domains: ["login.example.org", "tenant.example.org"],
+      returnUrls: [
+        "https://login.example.org/account/federation/oauth2",
+        "https://login.example.org/tenant.example.org/federation/oauth2",
+        "https://login.example.org/tenant/federation/oauth2",
+        "https://tenant.example.org/account/federation/oauth2",
+        "https://tenant.example.org/tenant.example.org/federation/oauth2"
+      ] });
+    expect(s.seen).toHaveLength(2);
+    const result = await cli(["developer", "services", "get", "--team-id", teamId, "--session-file", s.scope.sessionFile,
+      "--service-id", serviceId, "--identifier", identifier, "--json"], s.scope.fetch);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.output).result).toMatchObject({ serviceId, primaryAppId });
+    expect(result.output).not.toMatch(/responseId|dateModified|relationships|PRIVATE_COOKIE/);
+  });
+
+  it("does not stale a valid plan on volatile response metadata, or PATCH navigation/display fields", async () => {
+    const s = setup();
+    const observed = observedDeveloperService();
+    s.setCurrent(observed as unknown as Parent);
+    s.setPrimary({ data: observed.included[2] });
+    await s.plan();
+    observed.data.attributes.responseId = "00000000-0000-4000-8000-000000000002";
+    observed.data.attributes.dateModified = "2026-01-03T03:04:05.000+00:00";
+    s.setEffect(async body => {
+      const cap: any = observed.included[0];
+      const update = body.data.relationships.bundleIdCapabilities.data[0];
+      Object.assign(cap.attributes, update.attributes);
+      Object.assign(cap.relationships, update.relationships);
+      cap.attributes.responseId = "00000000-0000-4000-8000-000000000003";
+      observed.data.attributes.dateModified = "2026-01-04T03:04:05.000+00:00";
+      return json({ data: { type: "bundleIds", id: serviceId } });
+    });
+    expect(await kit.applyDeveloperService(s.scope)).toMatchObject({ state: "completed" });
+    const patch = JSON.parse(String(patches(s)[0]!.init.body));
+    expect(patch.data.attributes).toEqual({ name: "Existing web", identifier, seedId: teamId, platform: "SERVICES", teamId });
+    expect(JSON.stringify(patch)).not.toMatch(/responseId|dateModified|ownerType|editable|related|paging|profiles/);
+  });
+
+  it("plans and applies a verified no-op with the complete observed include graph", async () => {
+    const s = setup();
+    const observed = observedDeveloperService();
+    s.setCurrent(observed as unknown as Parent);
+    s.setPrimary({ data: observed.included[2] });
+    const desired = await s.get();
+    const plan = await s.plan({ domains: desired.domains, returnUrls: desired.returnUrls });
+    expect(plan.noOp).toBe(true);
+    expect(await kit.applyDeveloperService(s.scope)).toEqual({ ...plan, state: "completed" });
+    expect(patches(s)).toHaveLength(0);
+  });
+
+  it.each(["parent", "capability"] as const)("refuses unfamiliar actual relationship data on %s", async where => {
+    const s = setup();
+    const observed: any = observedDeveloperService();
+    const relationships = where === "parent" ? observed.data.relationships : observed.included[0].relationships;
+    relationships.unfamiliarAssociation = { data: [{ type: "bundleIds", id: "OTHER12345" }],
+      links: { related: "https://developer.apple.com/never-follow" } };
+    s.setCurrent(observed);
+    await expect(s.plan()).rejects.toMatchObject({ code: "invalid_response" });
+    expect(patches(s)).toHaveLength(0);
+  });
+
+  it.each(["entitlementGroupName", "bundleIdCapabilitiesSettingOption"] as const)
+  ("does not silently drop an unsupported non-null parent configuration %s", async field => {
+    const s = setup();
+    const observed: any = observedDeveloperService();
+    observed.data.attributes[field] = { unexpectedConfiguration: true };
+    s.setCurrent(observed);
+    await expect(s.plan()).rejects.toMatchObject({ code: "invalid_response" });
+    expect(patches(s)).toHaveLength(0);
+  });
+
+  const invalidMetadata: [string, (p: any) => void][] = [
+    ["date shape", p => { p.data.attributes.dateModified = null; }],
+    ["notice shape", p => { p.data.attributes.deploymentDataNotice = {}; }],
+    ["bundle type", p => { p.data.attributes.bundleType = "another-kind"; }],
+    ["wildcard", p => { p.data.attributes.wildcard = true; }],
+    ["owner scope", p => { p.included[0].attributes.ownerType = "TEAM"; }],
+    ["editability shape", p => { p.included[0].attributes.editable = "yes"; }],
+    ["input metadata integer", p => { p.included[0].attributes.inputs[0].minInstances = "1"; }],
+    ["input metadata range", p => { p.included[0].attributes.inputs[0].displayOrder = -1; }],
+    ["navigation null", p => { p.data.relationships.profiles = null; }],
+    ["navigation meta", p => { p.data.relationships.profiles.meta = []; }],
+    ["navigation paging", p => { p.data.relationships.profiles.meta.paging = null; }],
+    ["navigation unknown metadata", p => { p.data.relationships.profiles.meta.configuration = true; }],
+    ["navigation unknown paging", p => { p.data.relationships.profiles.meta.paging.configuration = true; }],
+    ["navigation total type", p => { p.data.relationships.profiles.meta.paging.total = "0"; }],
+    ["navigation total range", p => { p.data.relationships.profiles.meta.paging.total = -1; }],
+    ["navigation limit type", p => { p.data.relationships.profiles.meta.paging.limit = null; }],
+    ["navigation limit range", p => { p.data.relationships.profiles.meta.paging.limit = -1; }],
+    ["navigation links type", p => { p.data.relationships.profiles.links = []; }],
+    ["navigation links empty", p => { p.data.relationships.profiles.links = {}; }],
+    ["navigation unknown link", p => { p.data.relationships.profiles.links.configuration = "unexpected"; }],
+    ["navigation link type", p => { p.data.relationships.profiles.links.self = {}; }],
+    ["required capability data", p => { delete p.included[0].relationships.capability.data; }],
+    ["required primary data", p => { delete p.included[0].relationships.appConsentBundleId.data; }],
+    ["unfamiliar empty linkage", p => { p.included[0].relationships.appGroups.data = []; }],
+    ["unfamiliar null linkage", p => { p.included[0].relationships.appGroups.data = null; }]
+  ];
+  it.each(invalidMetadata)("still rejects unsafe observed metadata/linkage: %s", async (_label, mutate) => {
+    const s = setup();
+    const observed = observedDeveloperService();
+    mutate(observed);
+    s.setCurrent(observed as unknown as Parent);
+    await expect(s.plan()).rejects.toMatchObject({ code: "invalid_response" });
+    expect(patches(s)).toHaveLength(0);
+  });
+
+  it("accepts only validated metadata values without making them configuration preconditions", async () => {
+    const s = setup();
+    const observed: any = observedDeveloperService();
+    observed.data.attributes.deploymentDataNotice = "Display-only notice";
+    delete observed.data.relationships.profiles.links;
+    observed.included[0].attributes.editable = false;
+    const input = observed.included[0].attributes.inputs[0];
+    Object.assign(input, { required: true, type: "string", min: 0, max: 100 });
+    s.setCurrent(observed);
+    s.setPrimary({ data: observed.included[2] });
+    expect((await s.get()).serviceId).toBe(serviceId);
+    expect(patches(s)).toHaveLength(0);
+  });
+
+  it.each(["before", "after"] as const)("retains full unrelated configuration verification with observed metadata: %s", async phase => {
+    const s = setup();
+    const observed: any = observedDeveloperService();
+    const other: any = row("OTHER", false);
+    other.attributes.inputs = [{ key: "OTHER_INPUT", values: [{ value: "retain" }] }];
+    other.attributes.ownerType = "BUNDLE";
+    other.attributes.editable = false;
+    other.attributes.responseId = "00000000-0000-4000-8000-000000000001";
+    observed.data.relationships.bundleIdCapabilities.data.push({ type: "bundleIdCapabilities", id: other.id });
+    observed.included.push(other);
+    s.setCurrent(observed);
+    s.setPrimary({ data: observed.included[2] });
+    await s.plan();
+    if (phase === "before") {
+      other.attributes.inputs[0].values[0].value = "changed";
+      await expect(kit.applyDeveloperService(s.scope)).rejects.toMatchObject({ code: "stale_plan" });
+      expect(patches(s)).toHaveLength(0);
+    } else {
+      s.setEffect(async body => {
+        const configured = body.data.relationships.bundleIdCapabilities.data.find((r: any) => r.relationships.capability.data.id === "APPLE_ID_AUTH");
+        Object.assign(observed.included[0].attributes, configured.attributes);
+        Object.assign(observed.included[0].relationships, configured.relationships);
+        other.attributes.inputs[0].values[0].value = "changed";
+        return json({ data: { type: "bundleIds", id: serviceId } });
+      });
+      expect(await kit.applyDeveloperService(s.scope)).toMatchObject({ state: "uncertain", errorCode: "resource_mismatch" });
+      expect(patches(s)).toHaveLength(1);
+    }
+  });
+
+  it.each(["plan", "apply"] as const)("honors an explicit noneditable SIWA capability before an effect: %s", async phase => {
+    const s = setup();
+    const observed: any = observedDeveloperService();
+    s.setCurrent(observed);
+    s.setPrimary({ data: observed.included[2] });
+    if (phase === "apply") await s.plan();
+    observed.included[0].attributes.editable = false;
+    if (phase === "plan") await expect(s.plan()).rejects.toMatchObject({ code: "permission_denied" });
+    else await expect(kit.applyDeveloperService(s.scope)).rejects.toMatchObject({ code: "permission_denied" });
+    expect(patches(s)).toHaveLength(0);
+    expect(readdirSync(authorityDir()).filter(n => n.endsWith(".json"))).toHaveLength(0);
+  });
+
+  it("allows read-only inspection and verified no-op even when SIWA is not editable", async () => {
+    const s = setup();
+    const observed: any = observedDeveloperService();
+    observed.included[0].attributes.editable = false;
+    s.setCurrent(observed);
+    s.setPrimary({ data: observed.included[2] });
+    const current = await s.get();
+    const plan = await s.plan({ domains: current.domains, returnUrls: current.returnUrls });
+    expect(plan.noOp).toBe(true);
+    expect(await kit.applyDeveloperService(s.scope)).toMatchObject({ state: "completed", noOp: true });
+    expect(patches(s)).toHaveLength(0);
+  });
+
+  it("does not ignore navigation metadata that explicitly reports unexpanded associated resources", async () => {
+    const s = setup();
+    const observed: any = observedDeveloperService();
+    observed.included[0].relationships.appGroups.meta.paging.total = 1;
+    s.setCurrent(observed);
+    s.setPrimary({ data: observed.included[2] });
+    await expect(s.plan()).rejects.toMatchObject({ code: "invalid_response" });
+    expect(patches(s)).toHaveLength(0);
   });
 });

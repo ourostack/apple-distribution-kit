@@ -578,6 +578,13 @@ retaining parent metadata and unrelated capability enabled states, inputs,
 settings and primary associations. Unrecognized configuration shapes fail
 closed rather than being silently dropped. Display-only input metadata is not
 submitted as configuration.
+Known read-only dates, response IDs, labels and validated navigation-only
+`meta`/`links` relationships are accepted but are neither PATCHed nor used as
+configuration fingerprints. Required resource relationships still need exact
+`data` linkage. Unfamiliar relationship `data`, explicitly reported unexpanded
+associations and unsupported non-null configuration fields fail closed. An
+explicit SIWA `editable: false` permits inspection and verified no-op but blocks
+effectful planning/apply before intent or PATCH.
 
 Private service intents and resource indexes live at
 `$HOME/.apple-distribution-kit/developer-services-operations/<team-id>/`.
