@@ -8,6 +8,7 @@ import { planStoreSubmission } from "./store.js";
 import { getAppStoreConnect, smokeAppStoreConnect } from "./asc.js";
 import { redactSecrets } from "./redaction.js";
 import { signingCommand, signingUsage, type SigningCliDependencies } from "./signing-cli.js";
+import { developerCommand, developerUsage, type DeveloperCliDependencies } from "./developer-cli.js";
 import { buildTestFlightRequests, planTestFlightSubmission, publishTestFlightRequests } from "./testflight.js";
 import {
   buildXcodeCommand,
@@ -32,6 +33,7 @@ export interface CliDependencies {
   executeXcodeCommand?: (argv: string[]) => Promise<RawCommandResult>;
   publishTestFlightRequests?: typeof publishTestFlightRequests;
   signing?: Partial<SigningCliDependencies>;
+  developer?: DeveloperCliDependencies;
 }
 
 interface CliError {
@@ -54,6 +56,7 @@ Usage:
   apple-distribution-kit asc smoke [--config <path>] [--json]
   apple-distribution-kit asc get --path <path> [--query <name=value>] [--config <path>] [--json]
 ${signingUsage}
+${developerUsage}
 Commands:
   manifest validate   Validate distribution/apple-distribution.json
   plan                Build a machine-readable distribution plan
@@ -71,6 +74,10 @@ export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
   const smoke = dependencies.smokeAppStoreConnect ?? smokeAppStoreConnect;
   return async (argv: string[]) => {
     const args = [...argv];
+    if (args[0] === "--json" && args[1] === "developer") {
+      return developerCommand(io, [...args.slice(1), "--json"], dependencies.developer);
+    }
+    if (args[0] === "developer") return developerCommand(io, args, dependencies.developer);
     const json = takeFlag(args, "--json");
 
     if (takeFlag(args, "--help") || args.length === 0) {

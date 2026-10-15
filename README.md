@@ -256,3 +256,402 @@ What each command does:
 
 Do not pass `-allowProvisioningUpdates` or API key arguments to `xcodebuild` with this setup; nothing in the archive or
 export needs Apple's servers.
+# Apple Developer inspection and guarded SIWA keys
+
+The separate `developer` command family uses an explicitly enrolled Apple Developer
+web session, **not** App Store Connect JWT credentials. Inspection stays read-only;
+separate private plan/apply/reconcile commands support scoped Sign in with Apple
+key creation, revocation and one-time download. A separately guarded lane configures
+existing Services IDs as documented below; Services ID creation/deletion, arbitrary
+PATCH and agreement acceptance remain excluded.
+Existing ASC and signing commands are unchanged. Node 22 or newer is required.
+This Developer credential-store milestone supports **macOS and Linux only**.
+Windows and other platforms fail closed with `unsupported_platform` before
+reading stdin/files, enrolling/loading credentials, refreshing the store or
+extracting credential headers. No Windows ACL credential-store adapter exists.
+
+```sh
+# Create a private destination directory (not inside a source checkout).
+mkdir -m 700 "$HOME/.apple-developer-session"
+
+# Enrollment is local only: no Apple request is made by import.
+apple-distribution-kit developer session import \
+  --team-id TEAM123456 \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --input "$HOME/.apple-developer-session/enrollment.json" --json
+
+# --input - (or omitted --input) consumes the same JSON from stdin.
+apple-distribution-kit developer status \
+  --team-id TEAM123456 --session-file "$HOME/.apple-developer-session/session.json" --json
+apple-distribution-kit developer keys list \
+  --team-id TEAM123456 --session-file "$HOME/.apple-developer-session/session.json" --json
+apple-distribution-kit developer keys get --key-id ABC123DE45 \
+  --team-id TEAM123456 --session-file "$HOME/.apple-developer-session/session.json" --json
+```
+
+Every command requires an explicit ten-character uppercase alphanumeric team ID and
+an explicit private session file; `keys get` also requires a key ID of the same syntax.
+Unknown, duplicate and missing options are errors. Never put cookie values in arguments.
+The enrollment input is a private file or stdin containing:
+
+```ts
+{
+  teamId: string;
+  cookies: Array<{
+    name: string;
+    value: string;
+    domain: string;
+    path: string;
+    secure: boolean;
+    httpOnly: boolean;
+    expires: number; // CDP seconds since epoch; -1 means session cookie
+    sameSite?: "Strict" | "Lax" | "None";
+  }>;
+}
+```
+
+Enrollment rejects expired, insecure or out-of-scope cookies. Only cookies eligible
+for `https://developer.apple.com/services-account/QH65B2/` are accepted, with
+domain/path/expiry semantics supplied by `tough-cookie`. No browser profiles are
+enumerated, decrypted or imported. The input and destination must have private,
+non-symlink parents; on POSIX their immediate parent must be owned by the current
+user and have no group/world permissions. Files must be regular, owner-only,
+current-user-owned and not hardlinked. Enrollment never overwrites an existing
+destination: choose a new destination when manually re-enrolling.
+
+The session store is **plaintext owner-only local storage**, not encryption or
+Keychain storage. Keep both enrollment and store files outside Git, never share
+them, and retire old files according to your local credential-handling policy.
+POSIX ownership/mode checks are enforced on macOS/Linux. Windows is explicitly
+refused at runtime, not permitted with weakened file checks.
+
+`status` performs an actual scoped key-list read and returns `{ ready: true, teamId }`
+only after HTTP 200, a JSON schema with numeric `resultCode: 0`, and valid keys.
+List uses 50 keys per page, rejects duplicate/non-progressing pages, and fails
+instead of silently returning partial data at the 100-page limit. Get verifies the
+returned key ID. Summaries contain only `keyId`, `keyName`, validated `serviceIds`,
+`canDownload` and `canRevoke`; service configurations, creator identity and private
+key payloads are never returned.
+
+Only the supported pinned Developer paths receive credentials; no arbitrary URL,
+mutation path or raw request interface is exported. Redirects are
+never followed, each request has a 15-second timeout, and exceptions/server strings
+are replaced by stable `DeveloperError.code` values. HTTP 401, recognized Apple
+login redirects and HTML responses require manual sign-in; an empty/expired jar
+also returns a native `RequiresHuman` sign-in gate. HTTP 403 is `permission_denied`,
+not assumed to be 2FA. The verified numeric Apple `resultCode: 2100` returns
+`agreement_required` with a native manual `RequiresHuman` agreement gate at
+`https://developer.apple.com/register/agree/`. Unknown other nonzero result codes
+remain sanitized `apple_error`; server text is never used to guess sign-in,
+2FA or agreement gates. Agreement acceptance is always manual; no agreement is
+accepted by this layer.
+
+Eligible secure `Set-Cookie` updates on validated successful responses are
+atomically persisted in the private store. A detected change to the loaded store
+is not overwritten. Refresh acquires an exclusive owner-only
+`<session-file>.refresh.lock` before re-reading, comparing or replacing the store.
+Contention returns sanitized `session_store_busy` (CLI exit 69), without changing
+the store or removing another command's lock. Successful and failed refreshes
+release only the exact acquired lock, verified by its open descriptor's identity.
+Existing locks, including stale locks left by an interrupted process, are never
+automatically broken; confirmed abandoned locks require explicit local recovery.
+Session cookies retain browser-style session-cookie lifetime until Apple rejects
+them; persisted enrollment does not confer a new authenticated lifetime. Expiry,
+server-side invalidation, MFA or changed agreements may require signing in again
+and enrolling a fresh session. There is no promise of avoiding 2FA, and no
+password/2FA/CAPTCHA automation.
+
+Library usage:
+
+```ts
+import { createDeveloperClient, loadDeveloperSession, DeveloperError } from "apple-distribution-kit";
+
+const teamId = "TEAM123456";
+const session = loadDeveloperSession({ teamId, sessionFile: privatePath });
+const client = createDeveloperClient({ teamId, session });
+try {
+  const status = await client.status();
+  const keys = await client.keys.list();
+  const key = await client.keys.get("ABC123DE45");
+} catch (error) {
+  if (error instanceof DeveloperError) {
+    // Inspect the stable code / optional native requiresHuman; never dump credentials.
+  }
+}
+```
+
+JSON CLI success uses `{ ok: true, result }`; errors use
+`{ ok: false, error: { code, message, requiresHuman? } }`. Invalid arguments exit
+64, and failed inspection or a human gate exits 69. Import reports only enrollment,
+not live readiness. Neither library nor CLI returns arbitrary portal JSON.
+
+## SIWA plan / apply / reconcile
+
+These commands bind one explicit team, primary internal App ID, unprefixed primary
+bundle identifier and declared environment. **Environment is a bounded intent
+label, not an Apple-side test/production barrier.** The resource verification is
+the barrier: the primary's JSON API type/ID/identifier/seed must match, and an
+existing key must have exactly one SIWA service and exactly one directly matching
+`bundle` configuration. Additional services/configurations, related keys and
+enabled non-SIWA capability flags are refused rather than silently dropped.
+
+All examples below use illustrative IDs; supply your approved exact resources.
+Use a private directory outside Git for the session, plan and output.
+
+```sh
+apple-distribution-kit developer keys plan \
+  --action create --key-name "Example SIWA key" \
+  --team-id TEAM123456 --environment test \
+  --primary-app-id APP1234567 --primary-app-identifier org.example.primary \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --plan-file "$HOME/.apple-developer-session/create-plan.json" --json
+
+apple-distribution-kit developer keys apply \
+  --team-id TEAM123456 --environment test \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --plan-file "$HOME/.apple-developer-session/create-plan.json" --json
+
+apple-distribution-kit developer keys reconcile \
+  --team-id TEAM123456 --environment test \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --plan-file "$HOME/.apple-developer-session/create-plan.json" --json
+```
+
+For revocation, plan with `--action revoke --key-id <id>` instead of `--key-name`.
+For a one-time download, plan with `--action download --key-id <id> --output
+<private-new-destination>`. Both still require the exact primary ID/identifier,
+team, environment, session and plan file. Only create accepts `--key-name`; only
+download accepts/requires `--output`. Apply/reconcile accept no target, action,
+name, primary or destination overrides. Unknown/duplicate/missing options fail
+before transport.
+
+Plan performs only semantically read-only requests and creates an exclusive
+owner-only artifact. It never creates/revokes/downloads a vendor key. Plans carry
+an operation UUID, canonical SHA-256 integrity hash, exact scope/resource
+fingerprint and (for create) the permission-selected legacy/v2 payload. Apply
+checks integrity, re-reads the primary/key preconditions and named permission
+flags, and refuses stale plans rather than selecting a different creation
+version. A fresh scoped inventory supplies in-memory `csrf` / `csrf_ts` immediately
+before the effect. Tokens never enter plans or receipts.
+
+The stable private operation directory is
+`$HOME/.apple-distribution-kit/developer-operations/<team-id>/`. Cooperating kit
+commands share its exclusive owned team lock and resource indexes across session
+clones, plan nonces and environment labels. A private intent is written/fsynced
+before any effect; sanitized receipts are atomically persisted afterward. Keep
+this directory and its intents/indexes: deleting or moving the whole authority
+directory defeats local replay protection. Unknown outcomes, missing/corrupt
+referenced intents and stale/foreign/replaced locks fail closed. No command
+automatically breaks a stale lock.
+Each authority hierarchy entry is made durable by fsyncing its containing
+directory before proceeding, including entries adopted after an interrupted
+creation. Directory descriptors close even when fsync fails, and a failed
+durability barrier prevents vendor effects.
+
+There is **no automatic retry** of create, revoke or download, including network,
+HTTP, body/schema, postcondition or post-request disk failures. An unresolved
+same-resource effect also blocks fresh plans; pending is not treated as absent.
+Completed replays return the persisted receipt without vendor I/O. Reconcile is
+read-only: a uniquely named, exactly bound created key can settle creation; a
+complete inventory proving exact target absence can settle revocation. No visible
+match after uncertain creation does not authorize another create. A later
+intentional same-name creation requires the earlier operation settled and the
+earlier created resource verified absent.
+Reconciliation preserves sanitized error codes and native agreement/sign-in
+human gates while retaining `state: "uncertain"` and CLI exit 69; it never
+retries a key mutation to recover from an authentication or persistence failure.
+
+Download exclusively reserves a new owner-only regular destination before the
+one-time GET. Existing files, links and permissive destinations are never
+overwritten. The bounded response must parse as a PKCS#8 EC/P-256 private key;
+content/hash and owned file identity are checked after fsynced persistence.
+A private operation-local recovery artifact is persisted before writing the final
+destination, so final-destination disk failure retains private recovery material.
+Its pointer is in the private journal, **never in public receipts**. An uncertain
+download cannot be reconstructed from inventory and is never requested again,
+including during reconcile. Local recovery requires explicit inspection of the
+private artifacts; the kit has no retry/unlock/recovery mutation command.
+
+Exact library entry points:
+
+```ts
+import {
+  planDeveloperKey, applyDeveloperKey, reconcileDeveloperKey,
+  type DeveloperKeyPlanOptions, type DeveloperKeyScope
+} from "apple-distribution-kit";
+
+const input: DeveloperKeyPlanOptions = {
+  action: "create", keyName: "Example SIWA key",
+  teamId: "TEAM123456", environment: "test",
+  primaryAppId: "APP1234567", primaryAppIdentifier: "org.example.primary",
+  sessionFile: privateSessionPath, planFile: privatePlanPath
+};
+const planned = await planDeveloperKey(input); // Promise<DeveloperKeyPlanSummary>
+const scope: DeveloperKeyScope = {
+  teamId: input.teamId, environment: input.environment,
+  sessionFile: input.sessionFile, planFile: input.planFile
+};
+const applied = await applyDeveloperKey(scope); // Promise<DeveloperKeyReceipt>
+const reconciled = await reconcileDeveloperKey(scope); // Promise<DeveloperKeyReceipt>
+```
+
+`DeveloperKeyPlanOptions` is a discriminated union: create requires `keyName`,
+revoke requires `keyId`, and download requires `keyId` plus `output`. `fetch` is an
+optional injected transport on scope/options (useful for offline tests); it never
+changes the pinned destination contracts or permits automatic retries.
+Summaries/receipts allowlist only operation/scope/resource metadata, with a
+download SHA-256 on verified completion. They never contain creator metadata,
+raw vendor responses, cookies, CSRF, PEM, destinations or recovery paths.
+Uncertainty returns `{ ok: false, result: { state: "uncertain", ... } }` and exit
+69, optionally with a sanitized `errorCode` and native `requiresHuman` gate.
+Pre-effect refusals use the existing error envelope. An agreement-required
+response remains an explicit manual gate, never authorization to accept terms.
+This includes numeric `2100` in a non-PEM download error body; JSON is never
+accepted as a successful private-key download.
+
+### Existing Services IDs
+
+Services ID inspection and guarded configuration use the same private Developer
+session, pinned transport and durable operation helpers as the key lifecycle.
+These commands operate on **existing** Services IDs only: there is no create,
+delete, generic PATCH, unrelated capability disable, consent-grant or team
+capability operation.
+
+```sh
+apple-distribution-kit developer services get \
+  --team-id TEAM123456 \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --service-id SVC1234567 --identifier org.example.web --json
+
+apple-distribution-kit developer services plan \
+  --team-id TEAM123456 --environment test \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --plan-file "$HOME/.apple-developer-session/service-plan.json" \
+  --config "$HOME/.apple-developer-session/service-desired.json" --json
+
+apple-distribution-kit developer services apply \
+  --team-id TEAM123456 --environment test \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --plan-file "$HOME/.apple-developer-session/service-plan.json" --json
+
+apple-distribution-kit developer services reconcile \
+  --team-id TEAM123456 --environment test \
+  --session-file "$HOME/.apple-developer-session/session.json" \
+  --plan-file "$HOME/.apple-developer-session/service-plan.json" --json
+```
+
+The owner-only, nonsymlink desired JSON accepts exactly these six properties:
+
+```json
+{
+  "serviceId": "SVC1234567",
+  "identifier": "org.example.web",
+  "primaryAppId": "APP1234567",
+  "primaryAppIdentifier": "org.example.primary",
+  "domains": ["login.example.org"],
+  "returnUrls": ["https://login.example.org/Callback%2FExact?x=%2f"]
+}
+```
+
+Scope comes from the explicit team/environment arguments, never from the config.
+The environment label describes intended scope; it does not provide Apple-side
+isolation. Both resource IDs are Apple's internal IDs; identifiers are separate,
+unprefixed client/bundle identifiers. Inspection validates the exact Services ID,
+team seed, `SERVICES` platform and exact SIWA capability reference, then separately
+reads its associated primary to verify team and identifier. It uses the complete
+parent include graph, not an unsupported leaf capability GET.
+
+Domains and return URLs must be nonempty unique lists (at most 100 each).
+Domains are normalized to lowercase and sorted; URL lists are sorted without
+rewriting callback path/query spelling. Domains must be valid dotted hostnames,
+not IP addresses, wildcards or local/private-use names. Return URLs must be
+absolute HTTPS with an explicitly declared hostname, no userinfo, fragment,
+nondefault port, control characters or malformed escapes. Supplied URLs are
+never fetched. Unknown config fields and unsafe/ambiguous input fail before
+network access.
+
+Planning performs read-only parent/primary requests and exclusively publishes a
+versioned, hashed private plan. The plan binds exact scope, identifiers, desired
+lists and fingerprints of the current and intended complete relevant
+configuration. Apply re-reads those preconditions and the desired primary's
+ownership before any effect. It PATCHes the **parent** JSON API bundle resource,
+retaining parent metadata and unrelated capability enabled states, inputs,
+settings and primary associations. Unrecognized configuration shapes fail
+closed rather than being silently dropped. Display-only input metadata is not
+submitted as configuration.
+Known read-only dates, response IDs, labels and validated navigation-only
+`meta`/`links` relationships are accepted but are neither PATCHed nor used as
+configuration fingerprints. Required resource relationships still need exact
+`data` linkage. Unfamiliar relationship `data`, explicitly reported unexpanded
+associations and unsupported non-null configuration fields fail closed. An
+explicit SIWA `editable: false` permits inspection and verified no-op but blocks
+effectful planning/apply before intent or PATCH.
+Authoritative capability paging may not report more resources than the unique,
+validated linkage contains. Such partial graphs fail before intent/PATCH, or
+retain uncertainty if encountered after an effect. The attested `total: 0`
+alongside nonempty linkage remains accepted; paging totals are not blindly
+required to equal the linkage count.
+
+Private service intents and resource indexes live at
+`$HOME/.apple-distribution-kit/developer-services-operations/<team-id>/`.
+This is a separate resource namespace, using the key lifecycle's shared
+fsynced publication, integrity/index validation, private-directory and owned-lock
+mechanisms. Keep it intact. A pending/uncertain service intent blocks all new
+plans for that service across session clones and environment labels. Completed
+or no-op replay does not erase other pending history.
+
+An already exact configuration produces `noOp: true`; apply verifies it and
+persists completion without PATCH. Otherwise completion requires a fresh parent
+include-graph/primary read confirming the exact requested configuration **and**
+unchanged unrelated capabilities and parent metadata. Unknown HTTP, network,
+body, postcondition or persistence outcomes remain `state: "uncertain"` with no
+automatic PATCH retry. Read-only reconcile can verify the full intended
+postcondition or retain uncertainty; agreement/sign-in failures keep their
+native manual gates. CLI uncertainty is `{ok:false,result:{state:"uncertain",
+...}}` with exit 69. Pre-effect refusals use the existing sanitized error
+envelope. Public outputs contain resource/configuration metadata, never cookies,
+CSRF, raw server objects, creator information or private paths.
+Once a pending intent exists, reconciliation session-load failures also retain
+the operation's typed uncertain receipt, including validated `invalid_session`
+or `unsafe_session_store` errors. Malformed/unsafe local storage does not imply a
+sign-in gate. Before any intent exists, session-load failures remain ordinary
+refusals and create no journal entry or vendor effect.
+
+The resource-bound library interfaces are:
+
+```ts
+import {
+  getDeveloperService, planDeveloperService,
+  applyDeveloperService, reconcileDeveloperService,
+  type DeveloperServiceGetOptions, type DeveloperServicePlanOptions,
+  type DeveloperServiceScope
+} from "apple-distribution-kit";
+
+const inspection: DeveloperServiceGetOptions = {
+  teamId: "TEAM123456", sessionFile: privateSessionPath,
+  serviceId: "SVC1234567", identifier: "org.example.web"
+};
+await getDeveloperService(inspection); // Promise<DeveloperServiceSummary>
+
+const scope: DeveloperServiceScope = {
+  teamId: inspection.teamId, sessionFile: inspection.sessionFile,
+  environment: "test", planFile: privatePlanPath
+};
+const input: DeveloperServicePlanOptions = {
+  ...scope, serviceId: inspection.serviceId, identifier: inspection.identifier,
+  primaryAppId: "APP1234567", primaryAppIdentifier: "org.example.primary",
+  domains: ["login.example.org"],
+  returnUrls: ["https://login.example.org/Callback%2FExact?x=%2f"]
+};
+await planDeveloperService(input); // Promise<DeveloperServicePlanSummary>
+await applyDeveloperService(scope); // Promise<DeveloperServiceReceipt>
+await reconcileDeveloperService(scope); // Promise<DeveloperServiceReceipt>
+```
+
+All options accept optional injected `fetch` for offline consumers without
+changing the pinned destination/method contracts. Inspection returns
+`teamId`, the six configuration fields and `enabled`. Plan summaries return the
+six configuration fields plus `version:1`, `action:"configure-service"`,
+`operationId`, `teamId`, `environment`, `planHash` and `noOp`. Receipts add
+`state:"completed"|"uncertain"` and optional sanitized `errorCode` /
+`requiresHuman`.
