@@ -295,6 +295,9 @@ async function read(t: DeveloperTransport, options: { teamId: string; serviceId:
     if (identity.id !== `${options.serviceId}_${cap.relationships.capability.data.id}`) throw new DeveloperError("resource_mismatch");
     return cap;
   }).sort((a, b) => a.relationships.capability.data.id.localeCompare(b.relationships.capability.data.id));
+  const paging = (b.relationships.bundleIdCapabilities.meta as { paging: { total: number } } | undefined)?.paging;
+  // Zero is an attested sentinel; only an explicit additional-resource count proves incompleteness.
+  if (paging && paging.total > caps.length) throw new DeveloperError("invalid_response");
   const snapshot: Snapshot = { type: "bundleIds", id: options.serviceId,
     attributes: { name: b.attributes.name, identifier: options.identifier, seedId: options.teamId, platform: "SERVICES" },
     relationships: { bundleIdCapabilities: { data: caps } } };
@@ -380,9 +383,9 @@ function operations(dir: string, teamId: string): Operation[] {
       if (!record(r) || (raw.state !== "completed" && raw.state !== "uncertain")) throw new DeveloperError("invalid_operation");
       const code = r.errorCode;
       // Persisted receipts may only express errors this workflow can produce after intent.
-      if (code !== undefined && !["network_error", "http_error", "invalid_response", "redirect_rejected", "permission_denied",
+      if (code !== undefined && (typeof code !== "string" || !["network_error", "http_error", "invalid_response", "redirect_rejected", "permission_denied",
         "sign_in_required", "session_expired", "agreement_required", "apple_error", "resource_mismatch", "invalid_arguments",
-        "unsafe_session_store", "session_store_busy", "team_mismatch"].includes(String(code))) throw new DeveloperError("invalid_operation");
+        "unsafe_session_store", "session_store_busy", "team_mismatch", "invalid_session"].includes(code))) throw new DeveloperError("invalid_operation");
       const expected = raw.state === "completed" ? { ...summary(plan), state: "completed" } :
         uncertain(plan, code === undefined ? undefined : new DeveloperError(code as DeveloperError["code"]));
       if (canonical(r) !== canonical(expected)) throw new DeveloperError("invalid_operation");
@@ -439,9 +442,9 @@ async function execute(options: DeveloperServiceScope, reconcile: boolean): Prom
     if (prior?.state === "completed" || (prior && !reconcile)) return prior.receipt ?? uncertain(plan);
     if (reconcile && !prior) throw new DeveloperError("invalid_operation");
     if (!prior) checkPending(ops, plan.serviceId);
-    const t = transport(options);
     let op = prior;
     try {
+      const t = transport(options);
       const current = await read(t, plan);
       await primaryRead(t, plan.teamId, plan.primaryAppId, plan.primaryAppIdentifier);
       if (reconcile) {

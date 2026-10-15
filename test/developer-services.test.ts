@@ -928,4 +928,132 @@ describe("existing Services ID guarded configuration", () => {
     await expect(s.plan()).rejects.toMatchObject({ code: "invalid_response" });
     expect(patches(s)).toHaveLength(0);
   });
+
+  it.each(["plan", "apply"] as const)("T3-R1 refuses explicitly partial authoritative capability linkage before %s", async phase => {
+    const s = setup();
+    const observed = observedDeveloperService();
+    s.setCurrent(observed as unknown as Parent);
+    s.setPrimary({ data: observed.included[2] });
+    if (phase === "apply") await s.plan();
+    observed.data.relationships.bundleIdCapabilities.meta!.paging = { total: 2, limit: 1 };
+    if (phase === "plan") await expect(s.plan()).rejects.toMatchObject({ code: "invalid_response" });
+    else await expect(kit.applyDeveloperService(s.scope)).rejects.toMatchObject({ code: "invalid_response" });
+    expect(patches(s)).toHaveLength(0);
+    expect(readdirSync(authorityDir()).filter(n => n.endsWith(".json"))).toHaveLength(0);
+    if (phase === "plan") expect(existsSync(s.scope.planFile)).toBe(false);
+  });
+
+  it("T3-R1 retains uncertainty when a correct effect is followed by explicitly partial capability linkage", async () => {
+    const s = setup();
+    const observed: any = observedDeveloperService();
+    s.setCurrent(observed);
+    s.setPrimary({ data: observed.included[2] });
+    await s.plan();
+    s.setEffect(async body => {
+      const configured = body.data.relationships.bundleIdCapabilities.data[0];
+      Object.assign(observed.included[0].attributes, configured.attributes);
+      Object.assign(observed.included[0].relationships, configured.relationships);
+      observed.data.relationships.bundleIdCapabilities.meta.paging = { total: 2, limit: 1 };
+      return json({ data: { type: "bundleIds", id: serviceId } });
+    });
+    const receipt = await kit.applyDeveloperService(s.scope);
+    expect(receipt).toMatchObject({ state: "uncertain", errorCode: "invalid_response" });
+    expect(operation().value.state).toBe("uncertain");
+    expect(await kit.applyDeveloperService(s.scope)).toEqual(receipt);
+    expect(await kit.reconcileDeveloperService(s.scope)).toMatchObject({ state: "uncertain", errorCode: "invalid_response" });
+    expect(patches(s)).toHaveLength(1);
+    observed.data.relationships.bundleIdCapabilities.meta!.paging = { total: 1, limit: 1 };
+    expect(await kit.reconcileDeveloperService(s.scope)).toMatchObject({ state: "completed" });
+    expect(patches(s)).toHaveLength(1);
+  });
+
+  it("T3-R1 permits an explicitly complete positive capability count as well as the attested zero sentinel", async () => {
+    const s = setup();
+    const observed = observedDeveloperService();
+    observed.data.relationships.bundleIdCapabilities.meta!.paging = { total: 1, limit: 1 };
+    s.setCurrent(observed as unknown as Parent);
+    s.setPrimary({ data: observed.included[2] });
+    await s.plan();
+    expect(await kit.applyDeveloperService(s.scope)).toMatchObject({ state: "completed" });
+    expect(patches(s)).toHaveLength(1);
+  });
+
+  function breakFakeSession(sessionFile: string, kind: string) {
+    if (kind === "missing") renameSync(sessionFile, file("retained-fabricated-session.json"));
+    else if (kind === "malformed") writeFileSync(sessionFile, "{", { mode: 0o600 });
+    else if (kind === "unsafe") chmodSync(sessionFile, 0o644);
+    else if (kind === "schema") writeFileSync(sessionFile, JSON.stringify({ teamId, version: 99, jar: {} }), { mode: 0o600 });
+    else writeFileSync(sessionFile, JSON.stringify({ teamId: "OTHER12345", version: 1, jar: {} }), { mode: 0o600 });
+  }
+
+  it.each([
+    ["missing", "invalid_session"], ["malformed", "invalid_session"], ["unsafe", "unsafe_session_store"],
+    ["schema", "invalid_session"], ["wrong-team", "team_mismatch"]
+  ] as const)("T3-R2 preserves and replays pending-intent uncertainty for %s fabricated session storage", async (kind, errorCode) => {
+    const s = setup();
+    const planned = await s.plan();
+    const backup = file("fabricated-session-backup.json");
+    copyFileSync(s.scope.sessionFile, backup); chmodSync(backup, 0o600);
+    let intent = "";
+    s.setEffect(async body => {
+      const configured = body.data.relationships.bundleIdCapabilities.data.find((r: any) => r.relationships.capability.data.id === "APPLE_ID_AUTH");
+      const cap = s.current().included[2] as ReturnType<typeof row>;
+      Object.assign(cap.attributes, configured.attributes);
+      Object.assign(cap.relationships, configured.relationships);
+      intent = operation().path;
+      chmodSync(intent, 0o644);
+      throw new Error(secret);
+    });
+    try {
+      expect(await kit.applyDeveloperService(s.scope)).toMatchObject({ state: "uncertain", errorCode: "network_error" });
+    } finally { if (intent) chmodSync(intent, 0o600); }
+    expect(operation().value.state).toBe("pending");
+    expect(operation().value.receipt).toBeUndefined();
+    breakFakeSession(s.scope.sessionFile, kind);
+    const requestCount = s.seen.length;
+    const receipt = await kit.reconcileDeveloperService(s.scope);
+    expect(receipt).toEqual({ ...planned, state: "uncertain", errorCode });
+    expect(receipt).not.toHaveProperty("requiresHuman");
+    expect(operation().value.receipt).toEqual(receipt);
+    expect(await kit.applyDeveloperService(s.scope)).toEqual(receipt);
+    expect(await kit.reconcileDeveloperService(s.scope)).toEqual(receipt);
+    const result = await cli(["developer", "services", "reconcile", "--team-id", teamId, "--session-file", s.scope.sessionFile,
+      "--environment", "test", "--plan-file", s.scope.planFile, "--json"], s.scope.fetch);
+    expect(result.code).toBe(69);
+    expect(JSON.parse(result.output)).toEqual({ ok: false, result: receipt });
+    expect(result.output).not.toContain(secret);
+    expect(result.output).not.toContain(s.scope.sessionFile);
+    expect(s.seen).toHaveLength(requestCount);
+    copyFileSync(backup, s.scope.sessionFile); chmodSync(s.scope.sessionFile, 0o600);
+    expect(await kit.reconcileDeveloperService(s.scope)).toEqual({ ...planned, state: "completed" });
+    expect(patches(s)).toHaveLength(1);
+  });
+
+  it.each([
+    ["missing", "invalid_session"], ["malformed", "invalid_session"], ["unsafe", "unsafe_session_store"]
+  ] as const)("T3-R2 retains ordinary pre-intent refusal for %s fabricated session storage", async (kind, code) => {
+    const s = setup(); await s.plan();
+    breakFakeSession(s.scope.sessionFile, kind);
+    const requestCount = s.seen.length;
+    await expect(kit.applyDeveloperService(s.scope)).rejects.toMatchObject({ code });
+    const result = await cli(["developer", "services", "apply", "--team-id", teamId, "--session-file", s.scope.sessionFile,
+      "--environment", "test", "--plan-file", s.scope.planFile, "--json"], s.scope.fetch);
+    expect(result.code).toBe(69);
+    expect(JSON.parse(result.output)).toMatchObject({ ok: false, error: { code } });
+    expect(JSON.parse(result.output)).not.toHaveProperty("result");
+    expect(s.seen).toHaveLength(requestCount);
+    expect(patches(s)).toHaveLength(0);
+    expect(readdirSync(authorityDir()).filter(n => n.endsWith(".json"))).toHaveLength(0);
+  });
+
+  it("T3-R2 admits invalid_session only as a validated string receipt code", async () => {
+    const s = setup(); await s.plan();
+    s.setEffect(async () => { throw new Error(secret); });
+    await kit.applyDeveloperService(s.scope);
+    editOperation(op => { op.receipt.errorCode = ["invalid_session"]; });
+    const requests = s.seen.length;
+    await expect(kit.applyDeveloperService(s.scope)).rejects.toMatchObject({ code: "invalid_operation" });
+    expect(s.seen).toHaveLength(requests);
+    expect(patches(s)).toHaveLength(1);
+  });
 });

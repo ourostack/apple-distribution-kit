@@ -585,6 +585,11 @@ configuration fingerprints. Required resource relationships still need exact
 associations and unsupported non-null configuration fields fail closed. An
 explicit SIWA `editable: false` permits inspection and verified no-op but blocks
 effectful planning/apply before intent or PATCH.
+Authoritative capability paging may not report more resources than the unique,
+validated linkage contains. Such partial graphs fail before intent/PATCH, or
+retain uncertainty if encountered after an effect. The attested `total: 0`
+alongside nonempty linkage remains accepted; paging totals are not blindly
+required to equal the linkage count.
 
 Private service intents and resource indexes live at
 `$HOME/.apple-distribution-kit/developer-services-operations/<team-id>/`.
@@ -605,6 +610,11 @@ native manual gates. CLI uncertainty is `{ok:false,result:{state:"uncertain",
 ...}}` with exit 69. Pre-effect refusals use the existing sanitized error
 envelope. Public outputs contain resource/configuration metadata, never cookies,
 CSRF, raw server objects, creator information or private paths.
+Once a pending intent exists, reconciliation session-load failures also retain
+the operation's typed uncertain receipt, including validated `invalid_session`
+or `unsafe_session_store` errors. Malformed/unsafe local storage does not imply a
+sign-in gate. Before any intent exists, session-load failures remain ordinary
+refusals and create no journal entry or vendor effect.
 
 The resource-bound library interfaces are:
 
