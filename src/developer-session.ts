@@ -136,7 +136,11 @@ export function checkDeveloperPrivateParents(file: string, create: boolean): voi
   let current = parse(parent).root;
   for (const part of parts) {
     current = join(current, part);
-    if (create && current === parent && !existsSync(current)) mkdirSync(current, { mode: 0o700 });
+    if (create && current === parent) {
+      if (!existsSync(current)) mkdirSync(current, { mode: 0o700 });
+      const containing = openSync(dirname(current), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      try { fsyncSync(containing); } finally { closeSync(containing); }
+    }
     const st = lstatSync(current);
     if (st.isSymbolicLink() || !st.isDirectory()) throw new DeveloperError("unsafe_session_store");
   }

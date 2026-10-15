@@ -39,13 +39,10 @@ function summary(value: unknown): DeveloperKeySummary {
 
 export function createDeveloperClient(options: DeveloperClientOptions): DeveloperClient {
   validateDeveloperId(options.teamId);
-  if (!(options.session instanceof DeveloperSession)) throw new DeveloperError("invalid_session");
-  if (options.session.teamId !== options.teamId) throw new DeveloperError("team_mismatch");
   const transport = createDeveloperTransport(options);
   async function read(path: DeveloperReadPath, fields: Record<string, string>): Promise<DeveloperKeySummary[]> {
     const response = await transport.request(path, { fields });
-    const { data } = response;
-    if (!record(data)) throw new DeveloperError("invalid_response");
+    const data = response.data as Record<string, unknown>;
     if (!Array.isArray(data.keys) || data.keys.length > 50) throw new DeveloperError("invalid_response");
     const keys = data.keys.map(summary);
     response.accept();

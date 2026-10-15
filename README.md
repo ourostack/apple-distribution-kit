@@ -442,6 +442,10 @@ this directory and its intents/indexes: deleting or moving the whole authority
 directory defeats local replay protection. Unknown outcomes, missing/corrupt
 referenced intents and stale/foreign/replaced locks fail closed. No command
 automatically breaks a stale lock.
+Each authority hierarchy entry is made durable by fsyncing its containing
+directory before proceeding, including entries adopted after an interrupted
+creation. Directory descriptors close even when fsync fails, and a failed
+durability barrier prevents vendor effects.
 
 There is **no automatic retry** of create, revoke or download, including network,
 HTTP, body/schema, postcondition or post-request disk failures. An unresolved
@@ -452,6 +456,9 @@ complete inventory proving exact target absence can settle revocation. No visibl
 match after uncertain creation does not authorize another create. A later
 intentional same-name creation requires the earlier operation settled and the
 earlier created resource verified absent.
+Reconciliation preserves sanitized error codes and native agreement/sign-in
+human gates while retaining `state: "uncertain"` and CLI exit 69; it never
+retries a key mutation to recover from an authentication or persistence failure.
 
 Download exclusively reserves a new owner-only regular destination before the
 one-time GET. Existing files, links and permissive destinations are never

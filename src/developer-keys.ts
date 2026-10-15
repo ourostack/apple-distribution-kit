@@ -360,7 +360,7 @@ function readOperation(file: string, teamId: string): Operation {
     throw new DeveloperError("invalid_operation");
   }
   if (raw.recoveryFile !== undefined &&
-    (raw.action !== "download" || raw.recoveryFile !== join(directory(teamId), `${raw.operationId}.recovery.p8`))) throw new DeveloperError("invalid_operation");
+    (raw.action !== "download" || raw.recoveryFile !== join(dirname(resolve(file)), `${raw.operationId}.recovery.p8`))) throw new DeveloperError("invalid_operation");
   const op = raw as unknown as Operation;
   if (raw.receipt !== undefined) op.receipt = operationReceipt(raw.receipt, op);
   else if (raw.state === "completed") throw new DeveloperError("invalid_operation");
@@ -411,7 +411,7 @@ function updateOperation(dir: string, op: Operation, fields: Partial<Pick<Operat
 async function checkPriorCreation(dir: string, plan: { teamId: string; keyName: string }, keys: InventoryKey[]): Promise<void> {
   for (const op of allOperations(dir, plan.teamId)) {
     if (op.action === "create" && op.keyName === plan.keyName && op.state === "completed") {
-      if (!op.receipt?.keyId || keys.some(k => k.keyId === op.receipt!.keyId)) throw new DeveloperError("resource_exists");
+      if (keys.some(k => k.keyId === op.receipt!.keyId)) throw new DeveloperError("resource_exists");
     }
   }
 }
@@ -581,8 +581,7 @@ async function applyKey(options: DeveloperKeyScope): Promise<DeveloperKeyReceipt
       } else {
         const response = await t.request(`account/auth/key/download?teamId=${plan.teamId}&keyId=${plan.keyId!}`,
           { method: "GET", binary: true, csrf: inventory.csrf });
-        const { data } = response;
-        if (!Buffer.isBuffer(data)) throw new DeveloperError("invalid_response");
+        const data = response.data as Buffer;
         const hash = keyHash(data);
         verifyOwned(recovery!);
         writeFileSync(recovery!.fd, data); fsyncSync(recovery!.fd);
@@ -645,9 +644,9 @@ async function reconcileKey(options: DeveloperKeyScope): Promise<DeveloperKeyRec
         completed = receipt(plan, "completed");
       }
 
-    } catch { return receipt(plan, "uncertain"); }
+    } catch (error) { return uncertainReceipt(plan, error); }
     try { updateOperation(dir, op, { state: "completed", receipt: completed }); }
-    catch { return receipt(plan, "uncertain"); }
+    catch (error) { return uncertainReceipt(plan, error); }
     return completed;
   } finally { releaseDeveloperPrivateLock(lock); }
 }

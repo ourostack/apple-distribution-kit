@@ -121,6 +121,113 @@ describe("guarded SIWA lifecycle", () => {
     expect(Reflect.get(kit, "developerRequest")).toBeUndefined();
   });
 
+  it("durably publishes every new authority ancestor and the intent/index before a vendor effect", async () => {
+    const s = setup();
+    const authority = join(home, ".apple-distribution-kit");
+    const operationRoot = join(authority, "developer-operations");
+    const teamRoot = join(operationRoot, teamId);
+    expect(existsSync(authority)).toBe(false);
+    const events: { kind: string; path: string; inode?: number }[] = [];
+    const opened = new Map<number, string>();
+    const directoryDescriptors = new Set<number>();
+    const mkdirMock = vi.mocked(fs.mkdirSync);
+    const mkdir = mkdirMock.getMockImplementation()!;
+    const openMock = vi.mocked(fs.openSync);
+    const open = openMock.getMockImplementation()!;
+    const sync = fs.fsyncSync;
+    const close = fs.closeSync;
+    const link = fs.linkSync;
+    mkdirMock.mockImplementation((file, options) => {
+      const result = mkdir(file, options);
+      events.push({ kind: "mkdir", path: String(file) });
+      return result;
+    });
+    openMock.mockImplementation((file, flags, mode) => {
+      const fd = open(file, flags, mode);
+      opened.set(fd, String(file));
+      if (fs.fstatSync(fd).isDirectory()) directoryDescriptors.add(fd);
+      return fd;
+    });
+    const spies = [
+      vi.spyOn(fs, "fsyncSync").mockImplementation(fd => {
+        sync(fd);
+        const st = fs.fstatSync(fd);
+        events.push({ kind: st.isDirectory() ? "sync-directory" : "sync-file", path: opened.get(fd)!, inode: st.ino });
+      }),
+      vi.spyOn(fs, "closeSync").mockImplementation(fd => {
+        close(fd);
+        directoryDescriptors.delete(fd);
+        opened.delete(fd);
+      }),
+      vi.spyOn(fs, "linkSync").mockImplementation((from, to) => {
+        link(from, to);
+        events.push({ kind: "publish", path: String(to), inode: statSync(to).ino });
+      })
+    ];
+    syncBuiltinESMExports();
+    let effectAt = -1;
+    s.setEffect(async () => { effectAt = events.length; s.setKeys([s.key]); return json({ resultCode: 0 }); });
+    try {
+      await s.plan();
+      expect(await kit.applyDeveloperKey(s.common)).toMatchObject({ state: "completed" });
+      const beforeEffect = events.slice(0, effectAt);
+      const hierarchy = beforeEffect.filter(e => e.kind === "mkdir" ||
+        (e.kind === "sync-directory" && [home, authority, operationRoot].includes(e.path)));
+      expect(hierarchy.slice(0, 6).map(({ kind, path }) => ({ kind, path }))).toEqual([
+        { kind: "mkdir", path: authority }, { kind: "sync-directory", path: home },
+        { kind: "mkdir", path: operationRoot }, { kind: "sync-directory", path: authority },
+        { kind: "mkdir", path: teamRoot }, { kind: "sync-directory", path: operationRoot }
+      ]);
+      const publications = beforeEffect.filter(e => e.kind === "publish" &&
+        (e.path.endsWith(".index.json") || /\/[a-f0-9-]{36}\.json$/.test(e.path)));
+      expect(publications).toHaveLength(2);
+      for (const publication of publications) {
+        const publishedAt = beforeEffect.indexOf(publication);
+        expect(beforeEffect.slice(0, publishedAt).some(e => e.kind === "sync-file" && e.inode === publication.inode)).toBe(true);
+        expect(beforeEffect.slice(publishedAt + 1).some(e => e.kind === "sync-directory" && e.path === teamRoot)).toBe(true);
+      }
+      expect(effectAt).toBeGreaterThan(0);
+      expect(directoryDescriptors.size).toBe(0);
+      expect(effects(s)).toHaveLength(1);
+    } finally {
+      mkdirMock.mockImplementation(mkdir);
+      openMock.mockImplementation(open);
+      spies.forEach(spy => spy.mockRestore());
+      syncBuiltinESMExports();
+    }
+  });
+
+  it("fails closed and closes the containing-directory descriptor when hierarchy publication fsync fails", async () => {
+    const sessionFile = path("sync-failure-session.json");
+    const syncTeam = "SYNC123456";
+    kit.importDeveloperSession({ teamId: syncTeam, sessionFile, input: {
+      teamId: syncTeam, cookies: [{ name: "session", value: secret, domain: ".apple.com", path: "/", secure: true, httpOnly: true, expires: -1 }]
+    } });
+    const containing = statSync(join(home, ".apple-distribution-kit", "developer-operations"));
+    const sync = fs.fsyncSync;
+    let directoryFd: number | undefined;
+    const failure = vi.spyOn(fs, "fsyncSync").mockImplementation(fd => {
+      const st = fs.fstatSync(fd);
+      if (st.isDirectory() && st.dev === containing.dev && st.ino === containing.ino) {
+        directoryFd = fd;
+        throw new Error(secret);
+      }
+      sync(fd);
+    });
+    syncBuiltinESMExports();
+    const fetch = vi.fn(async () => { throw new Error(secret); });
+    try {
+      const error = await kit.planDeveloperKey({ teamId: syncTeam, sessionFile, fetch,
+        environment: "test", planFile: path("sync-failure-plan.json"), action: "create", keyName: "Example",
+        primaryAppId, primaryAppIdentifier }).catch((e: unknown) => e);
+      expect(error).toMatchObject({ code: "unsafe_session_store" });
+      expect(JSON.stringify(error)).not.toContain(secret);
+      expect(directoryFd).toBeDefined();
+      expect(() => fs.fstatSync(directoryFd!)).toThrow();
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { failure.mockRestore(); syncBuiltinESMExports(); }
+  });
+
   it.each([true, false])("plans without effects and sends exact named-permission selected creation payload (%s)", async enhanced => {
     const s = setup();
     s.setEnhanced(enhanced);
@@ -329,6 +436,38 @@ describe("guarded SIWA lifecycle", () => {
     const call = effects(s)[0]!;
     expect(call.init.method).toBe("POST");
     expect(String(call.init.body)).toBe(`teamId=TEAM123456&keyId=${s.key.keyId}`);
+    expect(effects(s)).toHaveLength(1);
+  });
+
+  it.each([
+    { kind: "agreement", code: "agreement_required", human: "developer_agreement_required" },
+    { kind: "unauthorized", code: "sign_in_required", human: "developer_sign_in_required" },
+    { kind: "login-redirect", code: "sign_in_required", human: "developer_sign_in_required" }
+  ])("preserves the $kind human gate during read-only reconciliation", async ({ kind, code, human }) => {
+    const s = setup(); await s.plan();
+    s.setEffect(async () => { throw new Error(secret); });
+    await kit.applyDeveloperKey(s.common);
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith("/list")) {
+        return kind === "agreement" ? json({ resultCode: 2100, resultString: secret }) :
+          kind === "unauthorized" ? new Response(secret, { status: 401 }) :
+            new Response(secret, { status: 302, headers: { location: "https://idmsa.apple.com/login" } });
+      }
+      return s.common.fetch(url, init);
+    };
+    const result = await kit.reconcileDeveloperKey({ ...s.common, fetch });
+    expect(result).toMatchObject({ state: "uncertain", errorCode: code,
+      requiresHuman: { type: "requiresHuman", code: human } });
+    expect(JSON.stringify(result)).not.toMatch(/NEVER_EXPOSE|resultString|creator@example/);
+    let output = "";
+    const cli = kit.createCli({ stdout: v => { output += v; }, stderr: v => { output += v; } }, { developer: { fetch } });
+    expect(await cli(["developer", "keys", "reconcile", "--team-id", teamId, "--environment", "test",
+      "--session-file", s.common.sessionFile, "--plan-file", s.common.planFile, "--json"])).toBe(69);
+    expect(JSON.parse(output)).toMatchObject({ ok: false, result: {
+      state: "uncertain", errorCode: code, requiresHuman: { type: "requiresHuman", code: human }
+    } });
+    expect(output).not.toContain(secret);
+    await kit.applyDeveloperKey(s.common);
     expect(effects(s)).toHaveLength(1);
   });
 

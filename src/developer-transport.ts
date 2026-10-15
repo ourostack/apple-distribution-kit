@@ -92,11 +92,10 @@ export function createDeveloperTransport(options: {
         // Also bound injected transports whose streams do not honor the request's signal.
         const abort = new Promise<never>((_, reject) => {
           abortListener = () => {
-            void reader.cancel().catch(() => {});
             reject(new DeveloperError("network_error"));
+            void reader.cancel().catch(() => {});
           };
           signal.addEventListener("abort", abortListener, { once: true });
-          if (signal.aborted) abortListener();
         });
         for (;;) {
           const item = await Promise.race([reader.read(), abort]);
