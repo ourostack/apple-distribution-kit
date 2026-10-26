@@ -6,6 +6,7 @@ import { loadManifest } from "./manifest.js";
 import { createPlan, type PlanMode } from "./plan.js";
 import { planStoreSubmission } from "./store.js";
 import { getAppStoreConnect, smokeAppStoreConnect } from "./asc.js";
+import { readReviewStatusFromConfig, REVIEW_PLATFORMS, reviewTransition, type ReviewPlatform } from "./review.js";
 import { redactSecrets } from "./redaction.js";
 import { signingCommand, signingUsage, type SigningCliDependencies } from "./signing-cli.js";
 import { developerCommand, developerUsage, type DeveloperCliDependencies } from "./developer-cli.js";
@@ -30,6 +31,7 @@ export type Cli = (argv: string[]) => Promise<number>;
 export interface CliDependencies {
   smokeAppStoreConnect?: typeof smokeAppStoreConnect;
   getAppStoreConnect?: typeof getAppStoreConnect;
+  readReviewStatus?: typeof readReviewStatusFromConfig;
   executeXcodeCommand?: (argv: string[]) => Promise<RawCommandResult>;
   publishTestFlightRequests?: typeof publishTestFlightRequests;
   signing?: Partial<SigningCliDependencies>;
@@ -55,6 +57,7 @@ Usage:
   apple-distribution-kit xcode run --kind <kind> --mode dry-run|apply [--json] [command options]
   apple-distribution-kit asc smoke [--config <path>] [--json]
   apple-distribution-kit asc get --path <path> [--query <name=value>] [--config <path>] [--json]
+  apple-distribution-kit review status --bundle-id <id> [--platform IOS|MAC_OS] [--config <path>] [--json]
 ${signingUsage}
 ${developerUsage}
 Commands:
@@ -66,6 +69,8 @@ Commands:
   xcode run           Build or run Apple toolchain commands behind an explicit mode gate
   asc smoke           Verify App Store Connect API credentials without printing secrets
   asc get             GET an App Store Connect API path with authenticated, redacted output
+  review status       App Review state of every App Store version and review submission (API key only;
+                      reading App Review's message text needs a web session, see README "App Review")
   signing             Long-lived CI signing: create the certificate once, then import it, fetch profiles and
                       sign with no certificate created per run (see README "CI Signing")
 `;
@@ -113,6 +118,9 @@ export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
     if (command === "asc" && subcommand === "smoke") {
       return ascSmokeCommand(io, json, args, smoke);
     }
+    if (command === "review" && subcommand === "status") {
+      return reviewStatusCommand(io, json, args, dependencies.readReviewStatus ?? readReviewStatusFromConfig);
+    }
     if (command === "asc" && subcommand === "get") {
       return ascGetCommand(io, json, args, dependencies.getAppStoreConnect ?? getAppStoreConnect);
     }
@@ -152,6 +160,43 @@ async function ascSmokeCommand(
       code: "asc_smoke_failed",
       message: (error as Error).message
     });
+  }
+}
+
+async function reviewStatusCommand(
+  io: CliIo,
+  json: boolean,
+  args: string[],
+  readStatus: typeof readReviewStatusFromConfig
+): Promise<number> {
+  const bundleId = optionValue(args, "--bundle-id");
+  if (!bundleId) {
+    return fail(io, json, 64, { code: "missing_bundle_id", message: "review status requires --bundle-id <id>" });
+  }
+  const platform = optionValue(args, "--platform");
+  if (platform !== undefined && !REVIEW_PLATFORMS.includes(platform as ReviewPlatform)) {
+    return fail(io, json, 64, { code: "invalid_platform", message: `Unknown platform: ${platform}` });
+  }
+  try {
+    const status = await readStatus({
+      configPath: optionValue(args, "--config") ?? discoverConfigPath({ env: process.env }),
+      bundleId,
+      ...(platform ? { platforms: [platform as ReviewPlatform] } : {})
+    });
+    if (json) {
+      io.stdout(`${JSON.stringify({ ok: true, result: status }, null, 2)}\n`);
+      return 0;
+    }
+    for (const version of status.versions) {
+      const note = reviewTransition(undefined, version.state, `${version.platform} ${version.version}`)!;
+      io.stdout(`${version.platform} ${version.version}: ${version.state} (${note.kind})\n`);
+    }
+    for (const submission of status.submissions) {
+      io.stdout(`Review submission ${submission.id} (${submission.platform}): ${submission.state}${submission.submittedDate ? `, submitted ${submission.submittedDate}` : ""}\n`);
+    }
+    return 0;
+  } catch (error) {
+    return fail(io, json, 69, { code: "review_status_failed", message: (error as Error).message });
   }
 }
 

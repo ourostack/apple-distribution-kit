@@ -19,6 +19,28 @@ export {
   signAppStoreConnectJwt,
   smokeAppStoreConnect
 } from "./asc.js";
+export {
+  LIVE_STATES,
+  REJECTED_STATES,
+  RELEASING_STATES,
+  REVIEW_PLATFORMS,
+  readReviewMessages,
+  readReviewStatus,
+  readReviewStatusFromConfig,
+  reviewHtmlToText,
+  reviewTransition
+} from "./review.js";
+export type {
+  ReviewAnnouncement,
+  ReviewAnnouncementKind,
+  ReviewMessage,
+  ReviewMessagesResult,
+  ReviewPlatform,
+  ReviewStatus,
+  ReviewSubmissionStatus,
+  ReviewVersionStatus,
+  ReviewWebGet
+} from "./review.js";
 export { discoverConfigPath, loadConfig } from "./config.js";
 export { loadManifest, validateManifestObject } from "./manifest.js";
 export { createPlan, createRequiresHuman } from "./plan.js";
