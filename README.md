@@ -158,6 +158,48 @@ The TestFlight request builder covers the App Store Connect resources exposed by
 Apple's OpenAPI spec: beta groups, beta build localizations, build beta details,
 beta app review details/submissions, and build beta notifications.
 
+## App Review: watching and reading rejections
+
+While any version is with App Review, check its state at the start of every session and after every long wait, not only CI. Apple announces a rejection by email and in App Store Connect, so a rejection can sit unseen for hours: Spoonjoy's iOS 1.0 rejection went unnoticed for about eleven hours while agents watched CI.
+
+```sh
+apple-distribution-kit review status --bundle-id app.example [--platform IOS|MAC_OS] [--json]
+```
+
+`review status` needs only the API key. It lists every App Store version and review submission. In code, `readReviewStatus(client, { bundleId })` returns the same data, and `reviewTransition(previous, current, label)` decides what a state change should announce, for a scheduled watch that comments on an issue or sends an alert.
+
+| State | Meaning | Next step |
+| --- | --- | --- |
+| `WAITING_FOR_REVIEW`, `IN_REVIEW` | With App Review | Keep watching |
+| `REJECTED`, `METADATA_REJECTED`, `INVALID_BINARY` (review submission `UNRESOLVED_ISSUES`) | Rejected | Read the reason, fix, resubmit |
+| `PENDING_DEVELOPER_RELEASE` | Approved, release type `MANUAL` | Release it |
+| `PENDING_APPLE_RELEASE`, `PROCESSING_FOR_APP_STORE` | Approved, Apple is releasing it | Keep watching |
+| `READY_FOR_SALE`, `READY_FOR_DISTRIBUTION` | Live | Stop watching |
+
+### Reading App Review's reason
+
+The reason text lives in Resolution Center, and only a signed-in Apple ID web session can read it:
+
+| Route | With the API key |
+| --- | --- |
+| `https://api.appstoreconnect.apple.com/v1/resolutionCenterThreads`, `/v1/apps/{id}/resolutionCenterThreads` | HTTP 404, not part of the public API |
+| `https://appstoreconnect.apple.com/iris/v1/...resolutionCenterThreads` | HTTP 401, needs a web session |
+
+Both results come from [spoonjoy-apple run 40384846591](https://github.com/spoonjoy/spoonjoy-apple/actions/runs/40384846591). The iris paths are unofficial; they were observed in [App-Store-Connect-CLI #775](https://github.com/rudrankriyam/App-Store-Connect-CLI/issues/775) and may change.
+
+`readReviewMessages(get, { appId, submissionId })` reads the threads, messages (converted from HTML to text) and rejection reasons. `get` is your own authenticated GET against `https://appstoreconnect.apple.com`. The kit never takes the session itself. When the session is missing, the result carries a `requiresHuman` asking the operator to sign in.
+
+To get a session without handling credentials, borrow the operator's signed-in browser:
+
+1. Start Playwright MCP in extension mode against the operator's browser profile that has the Playwright Extension. It reads the connection token from the profile; never print it, and redact it from the connect page's address in any output.
+2. Run navigation and actions in one MCP session. Each new session opens a new connect page.
+3. Open `https://appstoreconnect.apple.com/apps`. If it lands on `/login`, the session has expired. Signing in is the operator's step (passkey or two-factor), so ask them; never type a password.
+4. From that page, call `fetch(path, { credentials: "include" })` for `/iris/v1/resolutionCenterThreads?filter[reviewSubmission]=<submission id>`, then `/iris/v1/resolutionCenterThreads/<thread id>/resolutionCenterMessages?include=fromActor,rejections`, and pass that as `get`.
+
+Never write session cookies or the extension token to git, logs, issue or PR text, or notes.
+
+Apple also emails the account holder "There's an issue with your <app> (<platform>) submission." from `no_reply@email.apple.com`. The email signals a rejection but carries no reason.
+
 ## CI Signing
 
 Ephemeral CI runners start with an empty keychain. If `xcodebuild -allowProvisioningUpdates` runs there with an App
