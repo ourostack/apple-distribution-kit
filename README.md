@@ -1,6 +1,6 @@
 <!-- ourostack:brand:start -->
 <p align="center">
-  <a href="https://github.com/ourostack"><img src="https://raw.githubusercontent.com/ourostack/.github/main/brand/ouro.png" alt="Ourostack" width="96" height="96"></a>
+  <a href="https://github.com/ourostack"><img src="https://raw.githubusercontent.com/ourostack/.github/main/brand/headers/apple-distribution-kit.webp" alt="Ouro at a packing bench wrapping green gift boxes that roll down a conveyor into a red wagon" width="100%"></a>
 </p>
 <!-- ourostack:brand:end -->
 
