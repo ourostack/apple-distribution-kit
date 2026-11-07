@@ -4,9 +4,17 @@
 </p>
 <!-- ourostack:brand:end -->
 
-# apple-distribution-kit
+# Apple distribution kit
 
-Reusable Apple distribution automation for native apps.
+**Sign, notarize and ship native Apple apps from one manifest: Developer ID downloads, App Store review and TestFlight.** One JSON file says where the app goes; the kit plans the trip and runs it.
+
+[Manifest contract](#manifest-contract) · [TestFlight lane](#testflight-lane) · [CI signing](#ci-signing) · [More from Ouro](https://github.com/ourostack)
+
+```sh
+git clone https://github.com/ourostack/apple-distribution-kit && cd apple-distribution-kit
+npm ci && npm run build
+node dist/cli.js manifest validate --manifest /path/to/your-app/distribution/apple-distribution.json
+```
 
 ## Manifest Contract
 
