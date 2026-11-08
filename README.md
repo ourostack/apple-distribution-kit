@@ -20,6 +20,7 @@ cd apple-distribution-kit && npm ci && npm run build && npm link
 cd /path/to/your-app
 apple-distribution-kit manifest validate   # reads distribution/apple-distribution.json
 apple-distribution-kit plan                # what it would do, as a dry run
+apple-distribution-kit review login-services --root .   # Guideline 4.8 check before every App Store submission
 ```
 
 `npm link` puts the `apple-distribution-kit` command on your PATH; without it, run `node dist/cli.js` from the kit's folder.
@@ -53,5 +54,6 @@ A channel's `distribution` is `developer-id` (a signed, notarized Mac download),
 - [Manifest Contract](docs/manual.md#manifest-contract): every field, with a full TestFlight channel.
 - [TestFlight Lane](docs/manual.md#testflight-lane): upload, groups, tester notes and beta review.
 - [App Review](docs/manual.md#app-review-watching-and-reading-rejections): watching a review and reading a rejection.
+- [Guideline 4.8 login services](docs/manual.md#pre-submission-guideline-48-login-services): the check that Sign in with Apple is offered, entitled and first.
 - [CI Signing](docs/manual.md#ci-signing): signing in CI with no certificate created per run.
 - [Apple Developer inspection and guarded SIWA keys](docs/manual.md#apple-developer-inspection-and-guarded-siwa-keys): the `developer` commands.

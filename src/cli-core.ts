@@ -8,6 +8,7 @@ import { planStoreSubmission } from "./store.js";
 import { getAppStoreConnect, smokeAppStoreConnect } from "./asc.js";
 import { readReviewStatusFromConfig, REVIEW_PLATFORMS, reviewTransition, type ReviewPlatform } from "./review.js";
 import { redactSecrets } from "./redaction.js";
+import { checkLoginServices, collectLoginServiceSources } from "./login-services.js";
 import { signingCommand, signingUsage, type SigningCliDependencies } from "./signing-cli.js";
 import { developerCommand, developerUsage, type DeveloperCliDependencies } from "./developer-cli.js";
 import { buildTestFlightRequests, planTestFlightSubmission, publishTestFlightRequests } from "./testflight.js";
@@ -58,6 +59,7 @@ Usage:
   apple-distribution-kit asc smoke [--config <path>] [--json]
   apple-distribution-kit asc get --path <path> [--query <name=value>] [--config <path>] [--json]
   apple-distribution-kit review status --bundle-id <id> [--platform IOS|MAC_OS] [--config <path>] [--json]
+  apple-distribution-kit review login-services [--root <dir>] [--json]
 ${signingUsage}
 ${developerUsage}
 Commands:
@@ -71,6 +73,9 @@ Commands:
   asc get             GET an App Store Connect API path with authenticated, redacted output
   review status       App Review state of every App Store version and review submission (API key only;
                       reading App Review's message text needs a web session, see README "App Review")
+  review login-services
+                      Pre-submission Guideline 4.8 check: a third-party login needs Sign in with Apple, its
+                      entitlement, and its button first. Exits 1 on any finding
   signing             Long-lived CI signing: create the certificate once, then import it, fetch profiles and
                       sign with no certificate created per run (see README "CI Signing")
 `;
@@ -120,6 +125,9 @@ export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
     }
     if (command === "review" && subcommand === "status") {
       return reviewStatusCommand(io, json, args, dependencies.readReviewStatus ?? readReviewStatusFromConfig);
+    }
+    if (command === "review" && subcommand === "login-services") {
+      return reviewLoginServicesCommand(io, json, args);
     }
     if (command === "asc" && subcommand === "get") {
       return ascGetCommand(io, json, args, dependencies.getAppStoreConnect ?? getAppStoreConnect);
@@ -198,6 +206,40 @@ async function reviewStatusCommand(
   } catch (error) {
     return fail(io, json, 69, { code: "review_status_failed", message: (error as Error).message });
   }
+}
+
+async function reviewLoginServicesCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
+  if (args.includes("--root") && !optionValue(args, "--root")) {
+    return fail(io, json, 64, { code: "missing_root", message: "review login-services --root needs a directory" });
+  }
+  const root = optionValue(args, "--root") ?? process.cwd();
+  let report;
+  try {
+    report = checkLoginServices(await collectLoginServiceSources(root));
+  } catch (error) {
+    return fail(io, json, 66, { code: "login_services_failed", message: (error as Error).message });
+  }
+  const passed = report.findings.length === 0;
+  if (json) {
+    io.stdout(`${JSON.stringify({ ok: passed, result: report }, null, 2)}\n`);
+    return passed ? 0 : 1;
+  }
+  for (const finding of report.findings) {
+    const where = finding.path ? ` (${finding.path}:${finding.line})` : "";
+    io.stdout(`FAIL ${finding.rule}: ${finding.message}${where}\n`);
+  }
+  for (const note of report.notes) io.stdout(`note: ${note}\n`);
+  if (report.applies) {
+    const providers = [...new Set(report.thirdParty.map((hit) => hit.provider))].join(", ");
+    io.stdout(
+      passed
+        ? `Guideline 4.8 login services: passed (${providers} login with Sign in with Apple${
+            report.orderChecked ? " first" : "; button order not compared, no file holds both buttons"
+          })\n`
+        : `Guideline 4.8 login services: ${report.findings.length} ${pluralize("finding", report.findings.length)}\n`
+    );
+  }
+  return passed ? 0 : 1;
 }
 
 async function ascGetCommand(
