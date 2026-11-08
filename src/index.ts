@@ -41,6 +41,21 @@ export type {
   ReviewVersionStatus,
   ReviewWebGet
 } from "./review.js";
+export {
+  APPLE_SIGN_IN_ENTITLEMENT,
+  checkLoginServices,
+  collectLoginServiceSources,
+  SIGN_IN_WITH_APPLE_MARKERS,
+  THIRD_PARTY_LOGIN_MARKERS
+} from "./login-services.js";
+export type {
+  LoginMarker,
+  LoginServicesFinding,
+  LoginServicesReport,
+  LoginServicesRule,
+  MarkerHit,
+  SourceFile
+} from "./login-services.js";
 export { discoverConfigPath, loadConfig } from "./config.js";
 export { loadManifest, validateManifestObject } from "./manifest.js";
 export { createPlan, createRequiresHuman } from "./plan.js";

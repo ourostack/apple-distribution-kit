@@ -194,6 +194,45 @@ Never write session cookies or the extension token to git, logs, issue or PR tex
 
 Apple also emails the account holder "There's an issue with your <app> (<platform>) submission." from `no_reply@email.apple.com`. The email signals a rejection but carries no reason.
 
+## Pre-submission: Guideline 4.8 login services
+
+Run this before every App Store submission of an app that has a sign-in screen. Apple rejected Spoonjoy for Mac 1.0 (build 2) on 2026-11-02 under Guideline 4.8:
+
+> The app uses a third-party login service, but does not appear to offer as an equivalent login option another login service with all of the following features: limits data collection to the user's name and email address; allows users to keep their email address private; does not collect interactions with the app for advertising purposes without consent ... Note that Sign in with Apple is a login service that meets all the requirements specified in guideline 4.8.
+
+The app did offer Sign in with Apple, with the entitlement, but its button came last, below the email form and the "Continue with Google" and "Continue with GitHub" buttons. The rule: an app that offers a third-party login must offer Sign in with Apple too, and App Review expects it first or at least as prominent.
+
+```sh
+apple-distribution-kit review login-services [--root <dir>] [--json]
+```
+
+It reads every `.swift` and `.entitlements` file under `--root` (default: the working directory), skipping `.build`, `DerivedData`, `node_modules`, `Pods`, `.git` and test code (`Tests/`, folders ending in `Tests`, files ending in `Tests.swift` or containing `UITests`). Comment-only lines and block comments are ignored. If the app offers a third-party login (Google, GitHub, Facebook or Meta, Microsoft, X or Twitter, Auth0, Firebase providers and others; the list is `THIRD_PARTY_LOGIN_MARKERS` in `src/login-services.ts`), it fails when:
+
+- no Sign in with Apple appears in code (`SignInWithAppleButton`, `ASAuthorizationAppleIDButton` or `ASAuthorizationAppleIDProvider`);
+- no `.entitlements` file grants `com.apple.developer.applesignin` (a file without it, next to one with it, gets a note: fine for an extension, not for an app target);
+- in a file that has both, the Sign in with Apple button comes after the first third-party sign-in control, counting a button title like "Continue with Google", an SDK button, or a generic OAuth provider loop or sign-in call.
+
+With no third-party login, 4.8 does not apply and it passes. It exits 1 on any finding, so it can gate CI. `checkLoginServices(files)` is the same check as a pure function. The check does not compare buttons placed in different files; keep the sign-in buttons in one view.
+
+In an app's CI, before the App Store upload step (the kit has no npm package yet, so build it from source):
+
+```yaml
+- name: Guideline 4.8 login services
+  run: |
+    git clone --depth 1 https://github.com/ourostack/apple-distribution-kit "$RUNNER_TEMP/adk"
+    (cd "$RUNNER_TEMP/adk" && npm ci && npm run build)
+    node "$RUNNER_TEMP/adk/dist/cli.js" review login-services --root .
+```
+
+Where the kit is installed (`npm link`, or `npx apple-distribution-kit` once it is published), run `apple-distribution-kit review login-services --root .`.
+
+If App Review rejects under 4.8 while Sign in with Apple is already there, replying in Resolution Center that the app offers it is allowed, but the fix that sticks is putting its button first.
+
+Check these by hand before submitting; the command only notes them:
+
+- [ ] Guideline 5.1.1(v): an app that creates accounts lets people delete their account from inside the app. The command notes where it found account creation and deletion in code.
+- [ ] App Review notes carry working demo credentials (or a demo mode) for any sign-in the reviewer needs.
+
 ## CI Signing
 
 Ephemeral CI runners start with an empty keychain. If `xcodebuild -allowProvisioningUpdates` runs there with an App
