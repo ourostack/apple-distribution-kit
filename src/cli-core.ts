@@ -209,6 +209,9 @@ async function reviewStatusCommand(
 }
 
 async function reviewLoginServicesCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
+  if (args.includes("--root") && !optionValue(args, "--root")) {
+    return fail(io, json, 64, { code: "missing_root", message: "review login-services --root needs a directory" });
+  }
   const root = optionValue(args, "--root") ?? process.cwd();
   let report;
   try {
@@ -230,7 +233,9 @@ async function reviewLoginServicesCommand(io: CliIo, json: boolean, args: string
     const providers = [...new Set(report.thirdParty.map((hit) => hit.provider))].join(", ");
     io.stdout(
       passed
-        ? `Guideline 4.8 login services: passed (${providers} login with Sign in with Apple first)\n`
+        ? `Guideline 4.8 login services: passed (${providers} login with Sign in with Apple${
+            report.orderChecked ? " first" : "; button order not compared, no file holds both buttons"
+          })\n`
         : `Guideline 4.8 login services: ${report.findings.length} ${pluralize("finding", report.findings.length)}\n`
     );
   }

@@ -111,7 +111,7 @@ describe("checkLoginServices", () => {
       {
         rule: "sign-in-with-apple-not-first",
         message:
-          "Sign in with Apple must be first or at least as prominent: its button (line 8) comes after a third-party sign-in control (line 7).",
+          "Sign in with Apple must be first or at least as prominent: its button (line 8) is placed after a third-party sign-in control (line 7).",
         path: "SignInView.swift",
         line: 7
       }
@@ -177,7 +177,8 @@ describe("checkLoginServices", () => {
       thirdParty: [],
       signInWithApple: [],
       findings: [],
-      notes: ["No third-party login found, so Guideline 4.8 does not apply."]
+      notes: ["No third-party login found, so Guideline 4.8 does not apply."],
+      orderChecked: false
     });
   });
 
@@ -207,6 +208,71 @@ extension OAuthProviderHint {
     expect(report.thirdParty.map((hit) => hit.provider)).toEqual(["Google", "GitHub"]);
   });
 
+  it("orders controls in helper views by where the helpers are used", () => {
+    const view = `struct SignInView: View {
+    var body: some View {
+        VStack {
+            appleButton
+            googleButton
+        }
+    }
+    var googleButton: some View { Button("Continue with Google") {} }
+    var appleButton: some View {
+        SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in }
+    }
+}`;
+    const files = (content: string) => [
+      { path: "SignInView.swift", content },
+      { path: "App.entitlements", content: ENTITLED }
+    ];
+    const passed = checkLoginServices(files(view));
+    expect(passed.findings).toEqual([]);
+    expect(passed.orderChecked).toBe(true);
+    const swapped = view.replace("appleButton\n            googleButton", "googleButton\n            appleButton");
+    expect(checkLoginServices(files(swapped)).findings).toEqual([
+      expect.objectContaining({ rule: "sign-in-with-apple-not-first", line: 8 })
+    ]);
+  });
+
+  it("orders controls inside one shared helper by their lines in it, through nested helpers", () => {
+    const view = (first: string, second: string) => `struct SignInView: View {
+    var body: some View { panel }
+    private func panel() -> some View {
+        VStack {
+            ${first}
+            ${second}
+        }
+    }
+    var inner: some View { SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in } }
+}`;
+    const run = (content: string) =>
+      checkLoginServices([
+        { path: "V.swift", content },
+        { path: "App.entitlements", content: ENTITLED }
+      ]).findings.length;
+    expect(run(view("inner", "Button(\"Continue with Google\") {}"))).toBe(0);
+    expect(run(view("Button(\"Continue with Google\") {}", "inner"))).toBe(1);
+  });
+
+  it("stops at unused, cyclic and unterminated helpers", () => {
+    const unused = `var a: some View { SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in } }
+Button("Continue with Google") {}`;
+    const cyclic = `var a: some View { b; SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in } }
+var b: some View { a }
+Button("Continue with Google") {}`;
+    const unterminated = `Button("Continue with Google") {}
+var a: some View { VStack {
+SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in }`;
+    const rulesFor = (content: string) =>
+      checkLoginServices([
+        { path: "V.swift", content },
+        { path: "App.entitlements", content: ENTITLED }
+      ]).findings.map((finding) => finding.line);
+    expect(rulesFor(unused)).toEqual([]);
+    expect(rulesFor(cyclic)).toEqual([]);
+    expect(rulesFor(unterminated)).toEqual([1]);
+  });
+
   it("does not treat generic OAuth code alone as a third-party login", () => {
     const view = `func start() { ForEach(OAuthProviderHint.allCases) { _ in }; beginOAuthSignIn() }`;
     expect(checkLoginServices([{ path: "Own.swift", content: view }]).applies).toBe(false);
@@ -219,6 +285,7 @@ extension OAuthProviderHint {
       { path: "App.entitlements", content: ENTITLED }
     ]);
     expect(report.findings).toEqual([]);
+    expect(report.orderChecked).toBe(false);
   });
 
   it("reports account creation without deletion", () => {
@@ -249,8 +316,10 @@ extension OAuthProviderHint {
       "GoogleSignInButton(action: signIn)",
       "import FBSDKLoginKit",
       "let button = FBLoginButton()",
-      "import MSAL",
-      "import Auth0",
+      "Auth0.webAuth().connection(\"google-oauth2\").start()",
+      "try await supabase.auth.signInWithOAuth(provider: .github)",
+      "Amplify.Auth.signInWithWebUI(for: .google, presentationAnchor: window)",
+      "Text(\"Sign-in with Google\")",
       "let provider = OAuthProvider(providerID: \"github.com\")",
       "let credential = GoogleAuthProvider.credential(withIDToken: id, accessToken: token)",
       "let button = TWTRLogInButton { _, _ in }",
@@ -262,7 +331,20 @@ extension OAuthProviderHint {
       expect(checkLoginServices([{ path: "A.swift", content: sample }]).applies, sample).toBe(true);
     }
     expect(THIRD_PARTY_LOGIN_MARKERS.some((marker) => marker.provider === "Facebook")).toBe(true);
-    expect(checkLoginServices([{ path: "A.swift", content: "Text(\"Continue with Xcode\")" }]).applies).toBe(false);
+    for (const sample of [
+      "Text(\"Continue with Xcode\")",
+      "struct LoginButton: View { var body: some View { Text(\"Log in\") } }\nLoginButton()",
+      "import Auth0\nimport MSAL",
+      "let credential = OAuthProvider.credential(withProviderID: \"apple.com\", idToken: token, rawNonce: nonce)",
+      "try await supabase.auth.signInWithOAuth(provider: .apple)",
+      "let url = \"https://example.com/continue with Google\" // \"x\"",
+      "foo() /* start\n Continue with Google\n */ bar()",
+      "foo() // Continue with Google",
+      "let s = \"a \\\" // Sign in with GitHub\""
+    ]) {
+      const report = checkLoginServices([{ path: "A.swift", content: sample }]);
+      expect(report.applies, sample).toBe(sample.startsWith("let url") || sample.startsWith("let s"));
+    }
   });
 });
 
@@ -277,6 +359,10 @@ describe("collectLoginServiceSources", () => {
       "node_modules/x/X.swift": GOOGLE_ONLY,
       "Pods/GoogleSignIn/GIDSignIn.swift": GOOGLE_ONLY,
       ".git/hooks/H.swift": GOOGLE_ONLY,
+      "Carthage/Checkouts/G.swift": GOOGLE_ONLY,
+      "SourcePackages/checkouts/G.swift": GOOGLE_ONLY,
+      ".swiftpm/G.swift": GOOGLE_ONLY,
+      "vendor/G.swift": GOOGLE_ONLY,
       "Tests/AppTests/T.swift": GOOGLE_ONLY,
       "AppTests/Helper.swift": GOOGLE_ONLY,
       "App/SignInViewTests.swift": GOOGLE_ONLY,
@@ -300,7 +386,7 @@ describe("review login-services CLI", () => {
     const result = await run(["review", "login-services", "--root", root]);
     expect(result.code).toBe(1);
     expect(result.stdout).toBe(
-      "FAIL sign-in-with-apple-not-first: Sign in with Apple must be first or at least as prominent: its button (line 8) comes after a third-party sign-in control (line 7). (SignInView.swift:7)\n" +
+      "FAIL sign-in-with-apple-not-first: Sign in with Apple must be first or at least as prominent: its button (line 8) is placed after a third-party sign-in control (line 7). (SignInView.swift:7)\n" +
         "Guideline 4.8 login services: 1 finding\n"
     );
   });
@@ -345,6 +431,25 @@ describe("review login-services CLI", () => {
     const passed = await run(["review", "login-services", "--root", passing, "--json"]);
     expect(passed.code).toBe(0);
     expect(JSON.parse(passed.stdout)).toMatchObject({ ok: true, result: { findings: [] } });
+  });
+
+  it("says when button order was not compared", async () => {
+    const root = await tree({
+      "Google.swift": `Button("Continue with Google") {}`,
+      "Apple.swift": "SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in }",
+      "App.entitlements": ENTITLED
+    });
+    const result = await run(["review", "login-services", "--root", root]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe(
+      "Guideline 4.8 login services: passed (Google login with Sign in with Apple; button order not compared, no file holds both buttons)\n"
+    );
+  });
+
+  it("refuses --root with no directory", async () => {
+    const result = await run(["review", "login-services", "--root"]);
+    expect(result.code).toBe(64);
+    expect(result.stderr).toBe("review login-services --root needs a directory\n");
   });
 
   it("fails cleanly on a missing root", async () => {

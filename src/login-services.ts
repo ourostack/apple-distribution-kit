@@ -38,7 +38,7 @@ const BUTTON_TEXT_PROVIDERS = [
 ] as const;
 
 function buttonText(provider: string): RegExp {
-  return new RegExp(String.raw`\b(?:continue|sign\s*in|sign\s*up|log\s*in|login)\s+with\s+${provider}\b`, "i");
+  return new RegExp(String.raw`\b(?:continue|sign[\s-]*in|sign[\s-]*up|log[\s-]*in)\s+with\s+${provider}\b`, "i");
 }
 
 /** Third-party login markers. Add a provider or SDK here; nothing else needs to change. */
@@ -47,15 +47,24 @@ export const THIRD_PARTY_LOGIN_MARKERS: readonly LoginMarker[] = [
   { provider: "Google", pattern: /\bimport\s+GoogleSignIn\b|\bGIDSignIn\b|\bGIDConfiguration\b/, offers: true, control: false },
   { provider: "Google", pattern: /\bGIDSignInButton\b|\bGoogleSignInButton\b/, offers: true, control: true },
   { provider: "Facebook", pattern: /\bimport\s+FBSDKLoginKit\b|\bFBSDKLoginManager\b/, offers: true, control: false },
-  { provider: "Facebook", pattern: /\bFBLoginButton\b|\bFBSDKLoginButton\b|\bLoginButton\s*\(/, offers: true, control: true },
-  { provider: "Microsoft", pattern: /\bimport\s+MSAL\b|\bMSALPublicClientApplication\b/, offers: true, control: false },
-  { provider: "Auth0", pattern: /\bimport\s+Auth0\b|\bAuth0\s*\.\s*webAuth\b/, offers: true, control: false },
+  { provider: "Facebook", pattern: /\bFBLoginButton\b|\bFBSDKLoginButton\b/, offers: true, control: true },
+  // Auth0 and MSAL alone are often the app's own or an enterprise account system, which 4.8 exempts; only a social
+  // connection counts.
   {
-    provider: "Firebase",
-    pattern: /\b(?:Google|Facebook|Twitter|GitHub|Microsoft|Yahoo)AuthProvider\b|\bOAuthProvider\s*(?:\(|\.provider\s*\(|\.credential\s*\()/,
+    provider: "Auth0",
+    pattern: /\.connection\s*\(\s*"(?:google-oauth2|github|facebook|windowslive|twitter|linkedin)"/,
     offers: true,
     control: false
   },
+  {
+    provider: "Firebase",
+    pattern:
+      /^(?!.*"apple\.com").*?(?:\b(?:Google|Facebook|Twitter|GitHub|Microsoft|Yahoo)AuthProvider\b|\bOAuthProvider\s*(?:\(|\.provider\s*\(|\.credential\s*\())/,
+    offers: true,
+    control: false
+  },
+  { provider: "Supabase", pattern: /\bsignInWithOAuth\s*\(\s*provider:\s*\.(?!apple\b)\w+/, offers: true, control: false },
+  { provider: "Amplify", pattern: /\bsignInWithWebUI\s*\(\s*for:\s*\.(?!apple\b)\w+/, offers: true, control: false },
   { provider: "Twitter", pattern: /\bTWTRLogInButton\b/, offers: true, control: true },
   // Generic OAuth sign-in controls (a ForEach over providers, a call that starts an OAuth sign-in). They do not by
   // themselves mean a third-party login, but once one is found they mark where its buttons sit.
@@ -96,6 +105,8 @@ export interface LoginServicesReport {
   signInWithApple: MarkerHit[];
   findings: LoginServicesFinding[];
   notes: string[];
+  /** True when some file holds both a Sign in with Apple button and a third-party control, so their order was compared. */
+  orderChecked: boolean;
 }
 
 interface CodeLine {
@@ -103,34 +114,111 @@ interface CodeLine {
   text: string;
 }
 
-/** The lines of a Swift file that hold code: comment-only lines and block comments are dropped. */
+/** The code on each line of a Swift file, with comments removed (string literals are kept intact). */
 function codeLines(content: string): CodeLine[] {
   const lines: CodeLine[] = [];
   let inBlock = false;
   content.split(/\r?\n/).forEach((raw, index) => {
-    let text = raw.trim();
-    if (inBlock) {
-      const end = text.indexOf("*/");
-      if (end === -1) return;
-      inBlock = false;
-      text = text.slice(end + 2).trim();
-    }
-    if (text.startsWith("/*")) {
-      const end = text.indexOf("*/", 2);
-      if (end === -1) {
-        inBlock = true;
-        return;
+    let code = "";
+    let inString = false;
+    for (let i = 0; i < raw.length; i++) {
+      const char = raw.charAt(i);
+      const pair = raw.slice(i, i + 2);
+      if (inBlock) {
+        if (pair === "*/") {
+          inBlock = false;
+          i++;
+        }
+        continue;
       }
-      text = text.slice(end + 2).trim();
+      if (inString) {
+        code += char;
+        if (char === "\\") {
+          code += raw.charAt(i + 1);
+          i++;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (pair === "//") break;
+      if (pair === "/*") {
+        inBlock = true;
+        i++;
+        continue;
+      }
+      if (char === '"') inString = true;
+      code += char;
     }
-    if (text === "" || text.startsWith("//")) return;
-    lines.push({ line: index + 1, text });
+    const text = code.trim();
+    if (text !== "") lines.push({ line: index + 1, text });
   });
   return lines;
 }
 
+interface ViewProperty {
+  name: string;
+  start: number;
+  end: number;
+}
+
+const VIEW_PROPERTY = /\b(?:var\s+(\w+)\s*:\s*some\s+View|func\s+(\w+)\s*\([^)]*\)\s*->\s*some\s+View)\s*\{/;
+
+/** Helper views (`var name: some View { ... }` or `func name() -> some View { ... }`, not `body`) and their line spans. */
+function viewProperties(lines: CodeLine[]): ViewProperty[] {
+  const properties: ViewProperty[] = [];
+  lines.forEach(({ line, text }, index) => {
+    const match = VIEW_PROPERTY.exec(text);
+    const name = match?.[1] ?? match?.[2];
+    if (!name || name === "body") return;
+    let depth = 0;
+    let end = lines[lines.length - 1]!.line;
+    for (const candidate of lines.slice(index)) {
+      depth += (candidate.text.match(/\{/g) ?? []).length - (candidate.text.match(/\}/g) ?? []).length;
+      if (depth <= 0) {
+        end = candidate.line;
+        break;
+      }
+    }
+    properties.push({ name, start: line, end });
+  });
+  return properties;
+}
+
+/**
+ * Where a control appears in the view tree, outermost first. A control inside a helper view sits at the first line that
+ * uses the helper, so `VStack { appleButton; googleButton }` is judged by that order, not by where the helpers are
+ * declared; two controls in the same helper are then ordered by their lines inside it.
+ */
+function anchorPath(lines: CodeLine[], properties: ViewProperty[], line: number): number[] {
+  const path = [line];
+  const seen = new Set<string>();
+  for (;;) {
+    const property = properties.filter((candidate) => candidate.start <= line && line <= candidate.end).pop();
+    if (!property || seen.has(property.name)) return path;
+    seen.add(property.name);
+    const use = new RegExp(String.raw`\b${property.name}\b`);
+    const reference = lines.find(
+      (candidate) => (candidate.line < property.start || candidate.line > property.end) && use.test(candidate.text)
+    );
+    if (!reference) return path;
+    line = reference.line;
+    path.unshift(line);
+  }
+}
+
+/** Compare two anchor paths in view-tree order. */
+function comparePaths(a: number[], b: number[]): number {
+  const shared = Math.min(a.length, b.length);
+  for (let index = 0; index < shared; index++) {
+    if (a[index] !== b[index]) return a[index]! - b[index]!;
+  }
+  return a.length - b.length;
+}
+
 interface FileHits {
   path: string;
+  lines: CodeLine[];
   thirdParty: (MarkerHit & LoginMarker)[];
   apple: (MarkerHit & LoginMarker)[];
 }
@@ -172,6 +260,7 @@ export function checkLoginServices(files: SourceFile[]): LoginServicesReport {
     const lines = codeLines(file.content);
     perFile.push({
       path: file.path,
+      lines,
       thirdParty: scan(file.path, lines, THIRD_PARTY_LOGIN_MARKERS),
       apple: scan(file.path, lines, SIGN_IN_WITH_APPLE_MARKERS)
     });
@@ -197,7 +286,7 @@ export function checkLoginServices(files: SourceFile[]): LoginServicesReport {
 
   if (thirdParty.length === 0) {
     notes.push("No third-party login found, so Guideline 4.8 does not apply.");
-    return { applies: false, thirdParty, signInWithApple, findings, notes };
+    return { applies: false, thirdParty, signInWithApple, findings, notes, orderChecked: false };
   }
 
   const providers = [...new Set(thirdParty.map((hit) => hit.provider))].join(", ");
@@ -227,13 +316,22 @@ export function checkLoginServices(files: SourceFile[]): LoginServicesReport {
     }
   }
 
+  let orderChecked = false;
   for (const file of perFile) {
-    const thirdPartyControl = file.thirdParty.find((hit) => hit.control);
-    const appleControl = file.apple.find((hit) => hit.control);
-    if (!thirdPartyControl || !appleControl || appleControl.line < thirdPartyControl.line) continue;
+    const properties = viewProperties(file.lines);
+    const first = (hits: (MarkerHit & LoginMarker)[]) =>
+      hits
+        .filter((hit) => hit.control)
+        .map((hit) => ({ line: hit.line, path: anchorPath(file.lines, properties, hit.line) }))
+        .sort((a, b) => comparePaths(a.path, b.path))[0];
+    const thirdPartyControl = first(file.thirdParty);
+    const appleControl = first(file.apple);
+    if (!thirdPartyControl || !appleControl) continue;
+    orderChecked = true;
+    if (comparePaths(appleControl.path, thirdPartyControl.path) < 0) continue;
     findings.push({
       rule: "sign-in-with-apple-not-first",
-      message: `Sign in with Apple must be first or at least as prominent: its button (line ${appleControl.line}) comes after a third-party sign-in control (line ${thirdPartyControl.line}).`,
+      message: `Sign in with Apple must be first or at least as prominent: its button (line ${appleControl.line}) is placed after a third-party sign-in control (line ${thirdPartyControl.line}).`,
       path: file.path,
       line: thirdPartyControl.line
     });
@@ -247,10 +345,10 @@ export function checkLoginServices(files: SourceFile[]): LoginServicesReport {
     );
   }
 
-  return { applies: true, thirdParty, signInWithApple, findings, notes };
+  return { applies: true, thirdParty, signInWithApple, findings, notes, orderChecked };
 }
 
-const SKIPPED_DIRECTORIES = new Set([".build", "DerivedData", "node_modules", "Pods", ".git"]);
+const SKIPPED_DIRECTORIES = new Set([".build", "DerivedData", "node_modules", "Pods", ".git", "Carthage", "SourcePackages", ".swiftpm", "vendor"]);
 
 function isSkippedDirectory(name: string): boolean {
   return SKIPPED_DIRECTORIES.has(name) || name.endsWith("Tests");

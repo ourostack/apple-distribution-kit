@@ -206,13 +206,13 @@ The app did offer Sign in with Apple, with the entitlement, but its button came 
 apple-distribution-kit review login-services [--root <dir>] [--json]
 ```
 
-It reads every `.swift` and `.entitlements` file under `--root` (default: the working directory), skipping `.build`, `DerivedData`, `node_modules`, `Pods`, `.git` and test code (`Tests/`, folders ending in `Tests`, files ending in `Tests.swift` or containing `UITests`). Comment-only lines and block comments are ignored. If the app offers a third-party login (Google, GitHub, Facebook or Meta, Microsoft, X or Twitter, Auth0, Firebase providers and others; the list is `THIRD_PARTY_LOGIN_MARKERS` in `src/login-services.ts`), it fails when:
+It reads every `.swift` and `.entitlements` file under `--root` (default: the working directory), skipping `.build`, `DerivedData`, `node_modules`, `Pods`, `Carthage`, `SourcePackages`, `.swiftpm`, `vendor`, `.git` and test code (`Tests/`, folders ending in `Tests`, files ending in `Tests.swift` or containing `UITests`). Comments are ignored. If the app offers a third-party login (a "Continue with Google"-style button title, or the Google, Facebook, Firebase, Supabase or Amplify sign-in SDKs, or an Auth0 social connection; the list is `THIRD_PARTY_LOGIN_MARKERS` in `src/login-services.ts`), it fails when:
 
 - no Sign in with Apple appears in code (`SignInWithAppleButton`, `ASAuthorizationAppleIDButton` or `ASAuthorizationAppleIDProvider`);
 - no `.entitlements` file grants `com.apple.developer.applesignin` (a file without it, next to one with it, gets a note: fine for an extension, not for an app target);
-- in a file that has both, the Sign in with Apple button comes after the first third-party sign-in control, counting a button title like "Continue with Google", an SDK button, or a generic OAuth provider loop or sign-in call.
+- in a file that has both, the Sign in with Apple button is placed after the first third-party sign-in control (a button title, an SDK button, or a generic OAuth provider loop or sign-in call). A button inside a helper view (`var appleButton: some View`) counts where the helper is used.
 
-With no third-party login, 4.8 does not apply and it passes. It exits 1 on any finding, so it can gate CI. `checkLoginServices(files)` is the same check as a pure function. The check does not compare buttons placed in different files; keep the sign-in buttons in one view.
+With no third-party login, 4.8 does not apply and it passes. An Auth0 or MSAL import alone does not count, since 4.8 exempts an app's own and enterprise account systems. It exits 1 on any finding, so it can gate CI. `checkLoginServices(files)` is the same check as a pure function. Order is judged from source order within one file; buttons in different files are not compared, and the pass line says so.
 
 In an app's CI, before the App Store upload step (the kit has no npm package yet, so build it from source):
 
