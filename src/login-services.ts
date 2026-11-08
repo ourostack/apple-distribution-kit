@@ -158,37 +158,60 @@ function codeLines(content: string): CodeLine[] {
 
 interface ViewProperty {
   name: string;
+  /** A view struct is used as `Name(`; a helper property or function by its bare name. */
+  kind: "struct" | "member";
   start: number;
   end: number;
+  /** Where uses of a member are looked for: the struct that declares it, or the whole file. */
+  scope: { start: number; end: number };
 }
 
-const VIEW_PROPERTY = /\b(?:var\s+(\w+)\s*:\s*some\s+View|func\s+(\w+)\s*\([^)]*\)\s*->\s*some\s+View)\s*\{/;
+const VIEW_STRUCT = /\bstruct\s+(\w+)\s*:[^{]*\bView\b[^{]*\{/;
+const VIEW_MEMBER = /\b(?:var\s+(\w+)\s*:\s*some\s+View|func\s+(\w+)\s*\([^)]*\)\s*->\s*some\s+View)\s*\{/;
 
-/** Helper views (`var name: some View { ... }` or `func name() -> some View { ... }`, not `body`) and their line spans. */
+function braceDelta(text: string): number {
+  const code = text.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  return (code.match(/\{/g) ?? []).length - (code.match(/\}/g) ?? []).length;
+}
+
+/**
+ * Called only for a file that holds sign-in controls, so `lines` is never empty.
+ * View structs (`struct Name: View { ... }`) and helper views (`var name: some View { ... }` or
+ * `func name() -> some View { ... }`, not `body`) with their line spans.
+ */
 function viewProperties(lines: CodeLine[]): ViewProperty[] {
   const properties: ViewProperty[] = [];
+  const whole = { start: lines[0]!.line, end: lines[lines.length - 1]!.line };
   lines.forEach(({ line, text }, index) => {
-    const match = VIEW_PROPERTY.exec(text);
-    const name = match?.[1] ?? match?.[2];
+    const struct = VIEW_STRUCT.exec(text)?.[1];
+    const member = VIEW_MEMBER.exec(text);
+    const name = struct ?? member?.[1] ?? member?.[2];
     if (!name || name === "body") return;
     let depth = 0;
-    let end = lines[lines.length - 1]!.line;
+    let end = whole.end;
     for (const candidate of lines.slice(index)) {
-      depth += (candidate.text.match(/\{/g) ?? []).length - (candidate.text.match(/\}/g) ?? []).length;
+      depth += braceDelta(candidate.text);
       if (depth <= 0) {
         end = candidate.line;
         break;
       }
     }
-    properties.push({ name, start: line, end });
+    properties.push({ name, kind: struct ? "struct" : "member", start: line, end, scope: whole });
   });
+  for (const property of properties) {
+    if (property.kind === "struct") continue;
+    const owner = properties
+      .filter((candidate) => candidate.kind === "struct" && candidate.start < property.start && property.end <= candidate.end)
+      .pop();
+    if (owner) property.scope = { start: owner.start, end: owner.end };
+  }
   return properties;
 }
 
 /**
- * Where a control appears in the view tree, outermost first. A control inside a helper view sits at the first line that
- * uses the helper, so `VStack { appleButton; googleButton }` is judged by that order, not by where the helpers are
- * declared; two controls in the same helper are then ordered by their lines inside it.
+ * Where a control appears in the view tree, outermost first. A control inside a helper view or a view struct sits at
+ * the first line that uses it, so `VStack { appleButton; GoogleRow() }` is judged by that order, not by where the
+ * helpers are declared; two controls in the same helper are then ordered by their lines inside it.
  */
 function anchorPath(lines: CodeLine[], properties: ViewProperty[], line: number): number[] {
   const path = [line];
@@ -197,9 +220,13 @@ function anchorPath(lines: CodeLine[], properties: ViewProperty[], line: number)
     const property = properties.filter((candidate) => candidate.start <= line && line <= candidate.end).pop();
     if (!property || seen.has(property.name)) return path;
     seen.add(property.name);
-    const use = new RegExp(String.raw`\b${property.name}\b`);
+    const use = new RegExp(property.kind === "struct" ? String.raw`\b${property.name}\s*\(` : String.raw`\b${property.name}\b`);
     const reference = lines.find(
-      (candidate) => (candidate.line < property.start || candidate.line > property.end) && use.test(candidate.text)
+      (candidate) =>
+        candidate.line >= property.scope.start &&
+        candidate.line <= property.scope.end &&
+        (candidate.line < property.start || candidate.line > property.end) &&
+        use.test(candidate.text)
     );
     if (!reference) return path;
     line = reference.line;
@@ -318,15 +345,15 @@ export function checkLoginServices(files: SourceFile[]): LoginServicesReport {
 
   let orderChecked = false;
   for (const file of perFile) {
+    if (!file.thirdParty.some((hit) => hit.control) || !file.apple.some((hit) => hit.control)) continue;
     const properties = viewProperties(file.lines);
     const first = (hits: (MarkerHit & LoginMarker)[]) =>
       hits
         .filter((hit) => hit.control)
         .map((hit) => ({ line: hit.line, path: anchorPath(file.lines, properties, hit.line) }))
-        .sort((a, b) => comparePaths(a.path, b.path))[0];
+        .sort((a, b) => comparePaths(a.path, b.path))[0]!;
     const thirdPartyControl = first(file.thirdParty);
     const appleControl = first(file.apple);
-    if (!thirdPartyControl || !appleControl) continue;
     orderChecked = true;
     if (comparePaths(appleControl.path, thirdPartyControl.path) < 0) continue;
     findings.push({

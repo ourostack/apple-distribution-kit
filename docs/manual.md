@@ -210,9 +210,9 @@ It reads every `.swift` and `.entitlements` file under `--root` (default: the wo
 
 - no Sign in with Apple appears in code (`SignInWithAppleButton`, `ASAuthorizationAppleIDButton` or `ASAuthorizationAppleIDProvider`);
 - no `.entitlements` file grants `com.apple.developer.applesignin` (a file without it, next to one with it, gets a note: fine for an extension, not for an app target);
-- in a file that has both, the Sign in with Apple button is placed after the first third-party sign-in control (a button title, an SDK button, or a generic OAuth provider loop or sign-in call). A button inside a helper view (`var appleButton: some View`) counts where the helper is used.
+- in a file that has both, the Sign in with Apple button is placed after the first third-party sign-in control (a button title, an SDK button, or a generic OAuth provider loop or sign-in call). A button inside a helper view (`var appleButton: some View`) or a view struct in the same file (`AppleRow()`) counts where it is used.
 
-With no third-party login, 4.8 does not apply and it passes. An Auth0 or MSAL import alone does not count, since 4.8 exempts an app's own and enterprise account systems. It exits 1 on any finding, so it can gate CI. `checkLoginServices(files)` is the same check as a pure function. Order is judged from source order within one file; buttons in different files are not compared, and the pass line says so.
+With no third-party login, 4.8 does not apply and it passes. An Auth0 or MSAL import alone does not count, since 4.8 exempts an app's own and enterprise account systems. It exits 1 on any finding, so it can gate CI. `checkLoginServices(files)` is the same check as a pure function. Order is judged from source order within one file; buttons in different files are not compared, and the pass line says so. The comment scanner does not understand `"""` multiline or `#"…"#` raw strings, so comment markers inside them can hide code.
 
 In an app's CI, before the App Store upload step (the kit has no npm package yet, so build it from source):
 

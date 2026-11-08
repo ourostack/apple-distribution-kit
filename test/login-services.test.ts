@@ -254,6 +254,35 @@ extension OAuthProviderHint {
     expect(run(view("Button(\"Continue with Google\") {}", "inner"))).toBe(1);
   });
 
+  it("follows view structs in the same file, and finds helpers only in their own struct", () => {
+    const view = (first: string, second: string) => `struct Other: View {
+    var body: some View { content }
+    var content: some View { Text("{") }
+}
+struct SignInView: View {
+    var body: some View {
+        VStack {
+            ${first}
+            ${second}
+        }
+    }
+    var content: some View { SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in } }
+}
+struct AppleRow: View {
+    var body: some View { SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in } }
+}`;
+    const count = (content: string) =>
+      checkLoginServices([
+        { path: "V.swift", content },
+        { path: "App.entitlements", content: ENTITLED }
+      ]).findings.length;
+    const google = 'Button("Continue with Google") {}';
+    expect(count(view("AppleRow()", google))).toBe(0);
+    expect(count(view(google, "AppleRow()"))).toBe(1);
+    expect(count(view("content", google).replace(/\nstruct AppleRow[\s\S]*$/, ""))).toBe(0);
+    expect(count(view(google, "content").replace(/\nstruct AppleRow[\s\S]*$/, ""))).toBe(1);
+  });
+
   it("stops at unused, cyclic and unterminated helpers", () => {
     const unused = `var a: some View { SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in } }
 Button("Continue with Google") {}`;
