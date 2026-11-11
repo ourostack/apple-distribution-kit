@@ -25,6 +25,10 @@ apple-distribution-kit review login-services --root .   # Guideline 4.8 check be
 
 `npm link` puts the `apple-distribution-kit` command on your PATH; without it, run `node dist/cli.js` from the kit's folder.
 
+## Agent plugin
+
+[`plugins/apple-distribution`](plugins/apple-distribution) ships the kit's agent skills as a plugin: `build-native-apple-app`, `mac-app-distribution` and `sign-apple-apps`. They teach an agent to plan, build, sign, notarize and ship an Apple app with this kit. Install it with Agency (`agency plugin install github:ourostack/apple-distribution-kit:plugins/apple-distribution@main --cache-policy auto --cache-ttl 0`) or point any plugin-aware host at that folder. The skills moved here from `ourostack/ouroboros-skills`.
+
 ## A minimal manifest
 
 `distribution/apple-distribution.json` in your app:
