@@ -1,0 +1,11 @@
+{
+  "name": "apple-distribution",
+  "version": "0.1.0",
+  "description": "Agent skills for building, signing, notarizing and shipping native Apple apps with the Apple distribution kit: Developer ID downloads, App Store review and TestFlight.",
+  "author": {
+    "name": "ourostack",
+    "url": "https://github.com/ourostack/apple-distribution-kit"
+  },
+  "license": "MIT",
+  "skills": "./skills/"
+}
