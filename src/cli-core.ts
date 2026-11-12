@@ -684,6 +684,10 @@ function xcodeAltoolInput(kind: "altool-validate" | "altool-upload", args: strin
     return { error: "xcode run altool --platform must be macos, ios, appletvos, or visionos" };
   }
   const providerPublicId = optionValue(args, "--provider-public-id");
+  if (args.includes("--no-wait") && kind !== "altool-upload") {
+    return { error: "xcode run --no-wait applies only to --kind altool-upload" };
+  }
+  const noWait = args.includes("--no-wait") ? { wait: false } : {};
   const apiKey = optionValue(args, "--api-key");
   const apiIssuer = optionValue(args, "--api-issuer");
   if (apiKey || apiIssuer) {
@@ -697,7 +701,8 @@ function xcodeAltoolInput(kind: "altool-validate" | "altool-upload", args: strin
       apiIssuer,
       ...(platform ? { platform: platform as "macos" | "ios" | "appletvos" | "visionos" } : {}),
       ...(optionValue(args, "--p8-file-path") ? { p8FilePath: optionValue(args, "--p8-file-path")! } : {}),
-      ...(providerPublicId ? { providerPublicId } : {})
+      ...(providerPublicId ? { providerPublicId } : {}),
+      ...noWait
     } as XcodeCommandInput;
   }
 
@@ -712,7 +717,8 @@ function xcodeAltoolInput(kind: "altool-validate" | "altool-upload", args: strin
     username,
     password,
     ...(platform ? { platform: platform as "macos" | "ios" | "appletvos" | "visionos" } : {}),
-    ...(providerPublicId ? { providerPublicId } : {})
+    ...(providerPublicId ? { providerPublicId } : {}),
+    ...noWait
   } as XcodeCommandInput;
 }
 

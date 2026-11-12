@@ -38,7 +38,8 @@ describe("Xcode command generation", () => {
     ["altool-validate", { packagePath: "OuroMD.pkg", apiKey: "KEY", apiIssuer: "issuer", providerPublicId: "123" }, ["xcrun", "altool", "--validate-app", "-f", "OuroMD.pkg", "--type", "macos", "--api-key", "KEY", "--api-issuer", "issuer", "--provider-public-id", "123", "--output-format", "json"]],
     ["altool-validate", { packagePath: "OuroMD.pkg", username: "ari@example.com", password: "app-password" }, ["xcrun", "altool", "--validate-app", "-f", "OuroMD.pkg", "--type", "macos", "--username", "ari@example.com", "--password", "app-password", "--output-format", "json"]],
     ["altool-upload", { packagePath: "OuroMD.pkg", apiKey: "KEY", apiIssuer: "issuer", providerPublicId: "123" }, ["xcrun", "altool", "--upload-package", "OuroMD.pkg", "--type", "macos", "--api-key", "KEY", "--api-issuer", "issuer", "--provider-public-id", "123", "--output-format", "json", "--wait"]],
-    ["altool-upload", { packagePath: "Spoonjoy.ipa", platform: "ios", apiKey: "KEY", apiIssuer: "issuer", providerPublicId: "123" }, ["xcrun", "altool", "--upload-package", "Spoonjoy.ipa", "--api-key", "KEY", "--api-issuer", "issuer", "--provider-public-id", "123", "--output-format", "json", "--wait"]]
+    ["altool-upload", { packagePath: "Spoonjoy.ipa", platform: "ios", apiKey: "KEY", apiIssuer: "issuer", providerPublicId: "123" }, ["xcrun", "altool", "--upload-package", "Spoonjoy.ipa", "--api-key", "KEY", "--api-issuer", "issuer", "--provider-public-id", "123", "--output-format", "json", "--wait"]],
+    ["altool-upload", { packagePath: "Spoonjoy.ipa", platform: "ios", apiKey: "KEY", apiIssuer: "issuer", wait: false }, ["xcrun", "altool", "--upload-package", "Spoonjoy.ipa", "--api-key", "KEY", "--api-issuer", "issuer", "--output-format", "json"]]
   ] as const)("builds %s argv", (kind, input, argv) => {
     expect(buildXcodeCommand({ kind, ...input })).toEqual({ kind, argv });
   });

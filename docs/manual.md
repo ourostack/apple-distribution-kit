@@ -93,6 +93,13 @@ apple-distribution-kit xcode run \
   --json
 ```
 
+The upload passes altool `--wait`, so it returns only once App Store Connect has
+processed the build, which can take an hour. A caller that polls processing
+itself (for example with `asc get --path /v1/builds`) passes `--no-wait`, and the
+upload returns once the package is delivered. altool can log `UPLOAD SUCCEEDED`
+with a `Delivery UUID` and still exit non-zero while it waits, so judge the
+build by its App Store Connect `processingState`, not by the exit code alone.
+
 Use authenticated `asc get` calls to find the App Store Connect IDs needed for
 publishing:
 
