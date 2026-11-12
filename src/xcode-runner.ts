@@ -25,7 +25,7 @@ export type XcodeCommandInput =
   | { kind: "stapler-validate"; path: string }
   | { kind: "spctl"; path: string }
   | ({ kind: "altool-validate"; packagePath: string } & AltoolAuthInput)
-  | ({ kind: "altool-upload"; packagePath: string } & AltoolAuthInput);
+  | ({ kind: "altool-upload"; packagePath: string; wait?: boolean } & AltoolAuthInput);
 
 export type AltoolAuthInput =
   | { apiKey: string; apiIssuer: string; p8FilePath?: string; providerPublicId?: string; platform?: AltoolPlatform }
@@ -128,7 +128,9 @@ export function buildXcodeCommand(input: XcodeCommandInput): XcodeCommand {
           ...buildAltoolAuthArgs(input),
           "--output-format",
           "json",
-          "--wait"
+          // altool's --wait holds the upload open until App Store Connect finishes processing, which can take an
+          // hour; a caller that polls processing itself passes --no-wait.
+          ...(input.wait === false ? [] : ["--wait"])
         ]
       };
   }

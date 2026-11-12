@@ -1086,6 +1086,33 @@ describe("CLI scaffold", () => {
     ]);
   });
 
+  it("leaves altool's processing wait off an upload given --no-wait, and refuses it elsewhere", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+    await expect(
+      cli(["--json", "xcode", "run", "--kind", "altool-upload", "--mode", "dry-run", "--package-path", "App.ipa", "--platform", "ios", "--api-key", "KEY", "--api-issuer", "issuer", "--no-wait"])
+    ).resolves.toBe(0);
+    expect(JSON.parse(stdout.join("")).command).toEqual([
+      "xcrun",
+      "altool",
+      "--upload-package",
+      "App.ipa",
+      "--api-key",
+      "KEY",
+      "--api-issuer",
+      "issuer",
+      "--output-format",
+      "json"
+    ]);
+
+    const validateStdout: string[] = [];
+    const validateCli = createCli({ stdout: (chunk) => validateStdout.push(chunk), stderr: () => undefined });
+    await expect(
+      validateCli(["--json", "xcode", "run", "--kind", "altool-validate", "--mode", "dry-run", "--package-path", "App.ipa", "--api-key", "KEY", "--api-issuer", "issuer", "--no-wait"])
+    ).resolves.toBe(64);
+    expect(JSON.parse(validateStdout.join("")).error.message).toBe("xcode run --no-wait applies only to --kind altool-upload");
+  });
+
   it("redacts secrets in text dry-run output", async () => {
     const stdout: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
