@@ -281,6 +281,9 @@ certificate and replace both secrets; the next run creates fresh profiles for it
 ### Use it in a workflow
 
 ```yaml
+- name: Record existing certificates (before anything can create one)
+  run: node "$APPLE_DISTRIBUTION_KIT_BIN" signing snapshot-certificates --out "$RUNNER_TEMP/adk-signing/certificates-before.json"
+
 - name: Import long-lived signing identity
   env:
     APPLE_DISTRIBUTION_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
@@ -311,7 +314,7 @@ certificate and replace both secrets; the next run creates fresh profiles for it
 
 - name: Revoke API-created development certificates (safety net)
   if: always()
-  run: node "$APPLE_DISTRIBUTION_KIT_BIN" signing revoke-api-certificates --best-effort
+  run: node "$APPLE_DISTRIBUTION_KIT_BIN" signing revoke-api-certificates --best-effort --baseline "$RUNNER_TEMP/adk-signing/certificates-before.json"
 
 - name: Delete signing keychain
   if: always()
@@ -331,9 +334,14 @@ What each command does:
 - Every GET and DELETE to App Store Connect is retried on network loss or a retryable status, 4 attempts in total by
   default with backoff from 2 seconds (`--retries <n>` changes the attempt count). Creating a certificate or profile is
   never retried, so a lost response cannot create a duplicate.
+- `signing snapshot-certificates` writes the id of every certificate on the account to `--out`. Run it before any
+  step that could create a certificate.
 - `signing revoke-api-certificates` is the safety net. It revokes only development certificates named "Created via
-  API", never distribution, Developer ID, Mac or personal certificates, and says `Nothing to revoke` on a normal run.
-  `--dry-run` lists what it would revoke.
+  API" whose id is not in the `--baseline` file, so it removes only what this run created. It never touches a
+  certificate that existed before the run, even one with the same name (another repository's long-lived CI development
+  certificate is also named "Created via API"), and never touches distribution, Developer ID, Mac or personal
+  certificates. It refuses to run without `--baseline`; with `--best-effort` a missing baseline revokes nothing. It says
+  `Nothing to revoke` on a normal run. `--dry-run` lists what it would revoke.
 - `signing delete-keychain` removes the temporary keychain and its search-list entry.
 
 Do not pass `-allowProvisioningUpdates` or API key arguments to `xcodebuild` with this setup; nothing in the archive or
