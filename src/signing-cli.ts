@@ -14,7 +14,9 @@ import {
   importSigningIdentity,
   readPlistJson,
   renderSigningXcconfig,
+  parseCertificateBaseline,
   revokeApiDevelopmentCertificates,
+  snapshotCertificates,
   selectIdentity,
   writePlist,
   type SigningExec,
@@ -38,7 +40,8 @@ export const signingUsage = `  apple-distribution-kit signing create-certificate
   apple-distribution-kit signing import --keychain <path> --state <path> [--p12-base64-env <name>] [--password-env <name>] [--json]
   apple-distribution-kit signing profiles --state <path> --team-id <id> --bundle-id <id> [--bundle-id <id>] --xcconfig <path> --export-options <path> [--export-options-base <path>] [--profile-type IOS_APP_STORE] [--install-dir <dir>] [--identity-sha1 <sha1>] [--name-prefix <text>] [--retries <n>] [--config <path>] [--json]
   apple-distribution-kit signing delete-keychain --keychain <path>
-  apple-distribution-kit signing revoke-api-certificates [--dry-run] [--best-effort] [--retries <n>] [--config <path>] [--json]
+  apple-distribution-kit signing snapshot-certificates --out <path> [--retries <n>] [--config <path>] [--json]
+  apple-distribution-kit signing revoke-api-certificates --baseline <path> [--dry-run] [--best-effort] [--retries <n>] [--config <path>] [--json]
 `;
 
 export async function signingCommand(
@@ -59,6 +62,8 @@ export async function signingCommand(
         return await profilesCommand(io, json, args, dependencies);
       case "delete-keychain":
         return await deleteKeychainCommand(io, json, args, dependencies);
+      case "snapshot-certificates":
+        return await snapshotCommand(io, json, args, dependencies);
       case "revoke-api-certificates":
         return await revokeCommand(io, json, args, dependencies);
       default:
@@ -178,9 +183,24 @@ async function deleteKeychainCommand(io: SigningCliIo, json: boolean, args: stri
   return 0;
 }
 
-async function revokeCommand(io: SigningCliIo, json: boolean, args: string[], dependencies: SigningCliDependencies) {
+async function snapshotCommand(io: SigningCliIo, json: boolean, args: string[], dependencies: SigningCliDependencies) {
+  const out = required(args, "--out");
   const client = await clientFor(io, args, dependencies);
-  const result = await revokeApiDevelopmentCertificates({ client, dryRun: args.includes("--dry-run") });
+  const baseline = await snapshotCertificates({ client });
+  writeJson(out, baseline);
+  io.stdout(
+    json
+      ? `${JSON.stringify({ ok: true, out, count: baseline.certificateIds.length }, null, 2)}\n`
+      : `Recorded ${baseline.certificateIds.length} certificate id(s) in ${out}\n`
+  );
+  return 0;
+}
+
+async function revokeCommand(io: SigningCliIo, json: boolean, args: string[], dependencies: SigningCliDependencies) {
+  const baselinePath = required(args, "--baseline");
+  const baseline = parseCertificateBaseline(readFileSync(baselinePath, "utf8"));
+  const client = await clientFor(io, args, dependencies);
+  const result = await revokeApiDevelopmentCertificates({ client, baseline, dryRun: args.includes("--dry-run") });
   io.stdout(json ? `${JSON.stringify({ ok: true, ...result }, null, 2)}\n` : `${result.lines.join("\n")}\n`);
   return 0;
 }

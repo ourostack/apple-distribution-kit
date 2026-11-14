@@ -13,7 +13,7 @@ import type { RawCommandResult } from "./xcode-runner.js";
  * that with one long-lived certificate stored as CI secrets: the kit imports it into a temporary keychain, fetches or
  * creates matching provisioning profiles through the App Store Connect API, and writes manual-signing settings that
  * `xcodebuild` can use without talking to Apple. `revokeApiDevelopmentCertificates` stays as a safety net that should
- * normally find nothing.
+ * normally find nothing; it only revokes certificates missing from a baseline taken before the run.
  */
 
 export type SigningExec = (argv: string[]) => Promise<RawCommandResult>;
@@ -445,21 +445,55 @@ export async function writePlist(exec: SigningExec, path: string, value: JsonRec
   await run(exec, ["plutil", "-convert", "xml1", path]);
 }
 
+export interface CertificateBaseline {
+  certificateIds: string[];
+}
+
 /**
- * Safety net: revokes development certificates that Xcode automatic signing created through an API key. Only
- * development certificates named exactly "Created via API" qualify; distribution, Developer ID and Mac certificates and
- * certificates made by people are never touched.
+ * Records the id of every certificate on the account, before a run can create one. `revokeApiDevelopmentCertificates`
+ * takes this baseline and only ever revokes certificates that are not in it.
+ */
+export async function snapshotCertificates(input: { client: AppStoreConnectClient }): Promise<CertificateBaseline> {
+  const certificates = await listAll(input.client, "/v1/certificates", { limit: "200" });
+  return { certificateIds: certificates.map((resource) => String(resource.id)).sort() };
+}
+
+/** Reads a baseline written by `signing snapshot-certificates`. */
+export function parseCertificateBaseline(text: string): CertificateBaseline {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new SigningError("invalid_baseline", "The certificate baseline is not JSON.");
+  }
+  const ids = (value as { certificateIds?: unknown } | null)?.certificateIds;
+  if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) {
+    throw new SigningError("invalid_baseline", "The certificate baseline has no certificateIds list.");
+  }
+  return { certificateIds: ids };
+}
+
+/**
+ * Safety net: revokes development certificates that Xcode automatic signing created through an API key during this
+ * run. A certificate qualifies only if it is a development certificate named "Created via API" and its id is not in the
+ * baseline taken before the run. Certificates that existed before the run, such as another repository's long-lived CI
+ * development certificate (which has the same name), are never touched, and neither are distribution, Developer ID or
+ * Mac certificates or certificates made by people.
  */
 export async function revokeApiDevelopmentCertificates(input: {
   client: AppStoreConnectClient;
+  baseline: CertificateBaseline;
   dryRun?: boolean;
 }): Promise<RevokeResult> {
   const dryRun = input.dryRun ?? false;
+  const before = new Set(input.baseline.certificateIds);
   const certificates = (await listAll(input.client, "/v1/certificates", { limit: "200" })).map(summarizeCertificate);
-  const eligible = certificates.filter(isApiCreatedDevelopmentCertificate);
+  const eligible = certificates.filter((certificate) => !before.has(certificate.id) && isApiCreatedDevelopmentCertificate(certificate));
   const kept = certificates.filter((certificate) => !eligible.includes(certificate));
-  const lines = [`Found ${certificates.length} certificate(s); ${eligible.length} created via API and eligible for revocation.`];
-  kept.forEach((certificate) => lines.push(`keep: ${describeCertificate(certificate)}`));
+  const lines = [
+    `Found ${certificates.length} certificate(s); ${eligible.length} created via API since the baseline of ${before.size} and eligible for revocation.`
+  ];
+  kept.forEach((certificate) => lines.push(`keep${before.has(certificate.id) ? " (in baseline)" : ""}: ${describeCertificate(certificate)}`));
   const revoked: CertificateSummary[] = [];
   for (const certificate of eligible) {
     if (dryRun) {
@@ -472,7 +506,7 @@ export async function revokeApiDevelopmentCertificates(input: {
   }
   lines.push(
     eligible.length === 0
-      ? 'Nothing to revoke: no "Created via API" development certificates exist.'
+      ? 'Nothing to revoke: this run created no "Created via API" development certificates.'
       : `Revoked ${revoked.length} certificate(s)${dryRun ? " (dry run)" : ""}.`
   );
   return { found: certificates.length, eligible, kept, revoked, dryRun, lines };

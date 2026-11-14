@@ -88,6 +88,8 @@ export {
   readPlistJson,
   renderSigningXcconfig,
   revokeApiDevelopmentCertificates,
+  snapshotCertificates,
+  parseCertificateBaseline,
   selectIdentity,
   SigningError,
   writePlist
@@ -98,6 +100,7 @@ export type {
   InstalledProfile,
   ProfileResult,
   RevokeResult,
+  CertificateBaseline,
   SigningExec,
   SigningIdentity,
   SigningState

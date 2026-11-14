@@ -19,6 +19,8 @@ import {
   readPlistJson,
   renderSigningXcconfig,
   revokeApiDevelopmentCertificates,
+  snapshotCertificates,
+  parseCertificateBaseline,
   selectIdentity,
   SigningError,
   writePlist,
@@ -472,36 +474,60 @@ describe("signing settings", () => {
 
 describe("revokeApiDevelopmentCertificates", () => {
   const apiCreated = { id: "DEV1", attributes: { certificateType: "DEVELOPMENT", name: "Apple Development: Created via API", displayName: "Created via API", expirationDate: "2027-01-01" } };
+  const longLived = { id: "XRAY", attributes: { certificateType: "DEVELOPMENT", name: "Created via API", expirationDate: "2027-11-13" } };
   const person = { id: "DEV2", attributes: { certificateType: "DEVELOPMENT", name: "Apple Development: Ari", expirationDate: "2027-01-01" } };
   const apiDistribution = { id: "DIS1", attributes: { certificateType: "DISTRIBUTION", name: "Created via API", expirationDate: "2027-01-01" } };
   const unnamed = { id: "X", attributes: { certificateType: "DEVELOPMENT" } };
+  const empty = { certificateIds: [] };
 
-  it("revokes only development certificates created via API", async () => {
+  it("revokes only development certificates created via API that are not in the baseline", async () => {
     const { client, requests } = fakeClient({
-      "GET /v1/certificates": { data: [apiCreated, person, apiDistribution, unnamed] },
+      "GET /v1/certificates": { data: [longLived, apiCreated, person, apiDistribution, unnamed] },
       "DELETE /v1/certificates/DEV1": null
     });
-    const result = await revokeApiDevelopmentCertificates({ client });
+    const result = await revokeApiDevelopmentCertificates({ client, baseline: { certificateIds: ["XRAY"] } });
     expect(result.revoked.map((certificate) => certificate.id)).toEqual(["DEV1"]);
-    expect(result.kept.map((certificate) => certificate.id)).toEqual(["DEV2", "DIS1", "X"]);
+    expect(result.kept.map((certificate) => certificate.id)).toEqual(["XRAY", "DEV2", "DIS1", "X"]);
     expect(requests.map((request) => `${request.method} ${request.path}`)).toEqual(["GET /v1/certificates", "DELETE /v1/certificates/DEV1"]);
-    expect(result.lines[0]).toBe("Found 4 certificate(s); 1 created via API and eligible for revocation.");
+    expect(result.lines[0]).toBe("Found 5 certificate(s); 1 created via API since the baseline of 1 and eligible for revocation.");
+    expect(result.lines[1]).toBe('keep (in baseline): id=XRAY type=DEVELOPMENT name="Created via API" serial= expires=2027-11-13');
     expect(result.lines).toContain('revoked: id=DEV1 type=DEVELOPMENT name="Created via API" serial= expires=2027-01-01');
     expect(result.lines.at(-1)).toBe("Revoked 1 certificate(s).");
   });
 
+  it("never revokes a same-named certificate that existed before the run", async () => {
+    const { client, requests } = fakeClient({ "GET /v1/certificates": { data: [longLived] } });
+    const result = await revokeApiDevelopmentCertificates({ client, baseline: { certificateIds: ["XRAY"] } });
+    expect(result.revoked).toEqual([]);
+    expect(requests).toHaveLength(1);
+  });
+
   it("dry-runs without deleting", async () => {
     const { client, requests } = fakeClient({ "GET /v1/certificates": { data: [apiCreated] } });
-    const result = await revokeApiDevelopmentCertificates({ client, dryRun: true });
+    const result = await revokeApiDevelopmentCertificates({ client, baseline: empty, dryRun: true });
     expect(requests).toHaveLength(1);
     expect(result.lines.slice(1)).toEqual(['would revoke: id=DEV1 type=DEVELOPMENT name="Created via API" serial= expires=2027-01-01', "Revoked 0 certificate(s) (dry run)."]);
   });
 
   it("says so when there is nothing to revoke", async () => {
     const { client } = fakeClient({ "GET /v1/certificates": { data: [person] } });
-    const result = await revokeApiDevelopmentCertificates({ client });
-    expect(result.lines.at(-1)).toBe('Nothing to revoke: no "Created via API" development certificates exist.');
+    const result = await revokeApiDevelopmentCertificates({ client, baseline: empty });
+    expect(result.lines.at(-1)).toBe('Nothing to revoke: this run created no "Created via API" development certificates.');
     expect(isApiCreatedDevelopmentCertificate(result.kept[0]!)).toBe(false);
+  });
+});
+
+describe("certificate baselines", () => {
+  it("snapshots every certificate id, sorted", async () => {
+    const { client } = fakeClient({ "GET /v1/certificates": { data: [{ id: "B", attributes: {} }, { id: "A", attributes: {} }] } });
+    expect(await snapshotCertificates({ client })).toEqual({ certificateIds: ["A", "B"] });
+  });
+
+  it("parses a baseline and refuses a malformed one", () => {
+    expect(parseCertificateBaseline('{"certificateIds":["A"]}')).toEqual({ certificateIds: ["A"] });
+    for (const text of ["not json", "null", "{}", '{"certificateIds":[1]}']) {
+      expect(() => parseCertificateBaseline(text)).toThrow(SigningError);
+    }
   });
 });
 
@@ -632,33 +658,68 @@ describe("signing CLI", () => {
     expect(calls).toHaveLength(2);
   });
 
+  async function baselineFile(ids: string[] = []) {
+    const path = join(await makeTempDir(), "baseline.json");
+    writeFileSync(path, JSON.stringify({ certificateIds: ids }));
+    return path;
+  }
+
+  it("snapshots certificate ids to a file", async () => {
+    const dir = await makeTempDir();
+    const out = join(dir, "nested", "baseline.json");
+    const routes = { "GET /v1/certificates": { data: [{ id: "XRAY", attributes: {} }] } };
+    const text = cli({ client: fakeClient(routes).client });
+    expect(await text.run(["signing", "snapshot-certificates", "--out", out])).toBe(0);
+    expect(text.stdout.join("")).toBe(`Recorded 1 certificate id(s) in ${out}\n`);
+    expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({ certificateIds: ["XRAY"] });
+    const json = cli({ client: fakeClient(routes).client });
+    expect(await json.run(["signing", "snapshot-certificates", "--out", out, "--json"])).toBe(0);
+    expect(JSON.parse(json.stdout.join(""))).toEqual({ ok: true, out, count: 1 });
+    const missing = cli({});
+    expect(await missing.run(["signing", "snapshot-certificates", "--json"])).toBe(64);
+    expect(JSON.parse(missing.stdout.join("")).error).toEqual({ code: "missing_option", message: "signing snapshot-certificates requires --out" });
+  });
+
   it("runs the revoke safety net with retries and a clear empty result", async () => {
     const seen: Array<{ configPath: string; retry: RetryOptions }> = [];
+    const baseline = await baselineFile();
     const text = cli({
       client: fakeClient({ "GET /v1/certificates": { data: [] } }).client,
       env: { APPLE_DISTRIBUTION_KIT_CONFIG: "/env/config.json" },
       onClient: (configPath, retry) => seen.push({ configPath, retry })
     });
-    expect(await text.run(["signing", "revoke-api-certificates", "--dry-run"])).toBe(0);
-    expect(text.stdout.join("")).toBe('Found 0 certificate(s); 0 created via API and eligible for revocation.\nNothing to revoke: no "Created via API" development certificates exist.\n');
+    expect(await text.run(["signing", "revoke-api-certificates", "--baseline", baseline, "--dry-run"])).toBe(0);
+    expect(text.stdout.join("")).toBe('Found 0 certificate(s); 0 created via API since the baseline of 0 and eligible for revocation.\nNothing to revoke: this run created no "Created via API" development certificates.\n');
     expect(seen[0]!.configPath).toBe("/env/config.json");
     expect(seen[0]!.retry.attempts).toBe(4);
     seen[0]!.retry.onRetry!({ method: "GET", path: "/v1/certificates", attempt: 1, delayMs: 2000, reason: "fetch failed: The network connection was lost." });
     expect(text.stderr.join("")).toBe("App Store Connect GET /v1/certificates failed (fetch failed: The network connection was lost.); retry 1/3 in 2000ms\n");
 
     const json = cli({ client: fakeClient({ "GET /v1/certificates": { data: [] } }).client, onClient: (configPath, retry) => seen.push({ configPath, retry }) });
-    expect(await json.run(["signing", "revoke-api-certificates", "--json", "--retries", "2", "--config", "/c.json"])).toBe(0);
+    expect(await json.run(["signing", "revoke-api-certificates", "--baseline", baseline, "--json", "--retries", "2", "--config", "/c.json"])).toBe(0);
     expect(JSON.parse(json.stdout.join("")).found).toBe(0);
     expect(seen[1]).toEqual(expect.objectContaining({ configPath: "/c.json", retry: expect.objectContaining({ attempts: 2 }) }));
   });
 
+  it("refuses to revoke without a baseline, and revokes nothing in best-effort mode", async () => {
+    const { client, requests } = fakeClient({ "GET /v1/certificates": { data: [] } });
+    const strict = cli({ client });
+    expect(await strict.run(["signing", "revoke-api-certificates", "--json"])).toBe(64);
+    expect(JSON.parse(strict.stdout.join("")).error).toEqual({ code: "missing_option", message: "signing revoke-api-certificates requires --baseline" });
+    const best = cli({ client });
+    expect(await best.run(["signing", "revoke-api-certificates", "--best-effort", "--baseline", join(await makeTempDir(), "missing.json")])).toBe(0);
+    expect(best.stderr.join("")).toContain("signing revoke-api-certificates warning: ENOENT");
+    expect(requests).toHaveLength(0);
+  });
+
   it("downgrades revoke failures in best-effort mode only", async () => {
+    const baseline = await baselineFile();
     const failing = { get: async () => Promise.reject(new Error("HTTP 500")), request: async () => null } as AppStoreConnectClient;
     const best = cli({ client: failing });
-    expect(await best.run(["signing", "revoke-api-certificates", "--best-effort"])).toBe(0);
+    expect(await best.run(["signing", "revoke-api-certificates", "--best-effort", "--baseline", baseline])).toBe(0);
     expect(best.stderr.join("")).toBe("signing revoke-api-certificates warning: HTTP 500\n");
     const strict = cli({ client: failing });
-    expect(await strict.run(["signing", "revoke-api-certificates", "--json"])).toBe(69);
+    expect(await strict.run(["signing", "revoke-api-certificates", "--json", "--baseline", baseline])).toBe(69);
     expect(JSON.parse(strict.stdout.join(""))).toEqual({ ok: false, error: { code: "signing_failed", message: "HTTP 500" } });
   });
 
@@ -671,7 +732,7 @@ describe("signing CLI", () => {
     expect(JSON.parse(missing.stdout.join("")).error).toEqual({ code: "missing_option", message: "signing delete-keychain requires --keychain" });
     for (const retries of ["0", "11", "x"]) {
       const bad = cli({});
-      expect(await bad.run(["signing", "revoke-api-certificates", "--retries", retries])).toBe(64);
+      expect(await bad.run(["signing", "snapshot-certificates", "--out", "/tmp/unused.json", "--retries", retries])).toBe(64);
       expect(bad.stderr.join("")).toBe(`--retries must be an integer from 1 to 10, got: ${retries}\n`);
     }
   });
@@ -681,7 +742,7 @@ describe("signing CLI", () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
     const run = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: (chunk) => stderr.push(chunk) });
-    expect(await run(["signing", "revoke-api-certificates", "--config", join(dir, "missing.json")])).toBe(69);
+    expect(await run(["signing", "snapshot-certificates", "--out", join(dir, "baseline.json"), "--config", join(dir, "missing.json")])).toBe(69);
     expect(stderr.join("")).toContain("missing.json");
     const withExecutor = createCli(
       { stdout: (chunk) => stdout.push(chunk), stderr: (chunk) => stderr.push(chunk) },
