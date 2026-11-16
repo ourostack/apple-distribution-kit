@@ -34,11 +34,13 @@ jobs:
             --home "$RUNNER_TEMP/xray-home" --env "APPLE_DISTRIBUTION_ASC_BASE_URL=$MOCK_URL" \
             --guard "node scripts/assert-mock.mjs" --state "manifest validate" \
             --commit "$GITHUB_SHA" --json --md xray/xray.md > xray/report.json
+          node -e "const s = require('./xray/report.json').summary; if (!s) process.exit(1); if (s.mustHolding !== s.must) { console.error('X-ray: ' + s.mustHolding + ' of ' + s.must + ' must claims hold; see xray/xray.md in the artifact'); process.exit(1); }"
       - name: Action claims
         run: |
           mkdir -p xray-actions
           node tools/ouro-actions/ouro-actions.mts check actions/apple-distribution-kit.actions.mts actions/generated \
             --report xray-actions/report.json --app "Apple distribution kit" --commit "$GITHUB_SHA"
+          node -e "const s = require('./xray-actions/report.json').summary; if (!s) process.exit(1); if (s.mustHolding !== s.must) { console.error('Action claims: ' + s.mustHolding + ' of ' + s.must + ' must claims hold'); process.exit(1); }"
       - name: Upload the X-ray
         if: always()
         uses: actions/upload-artifact@v4
