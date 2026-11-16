@@ -15,11 +15,27 @@ export interface JwtInput extends AscAuth {
   durationSeconds?: number;
 }
 
+export const ASC_BASE_URL_ENV = "APPLE_DISTRIBUTION_ASC_BASE_URL";
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]"]);
+
+/**
+ * The App Store Connect base URL: Apple's by default. A test mock may set `APPLE_DISTRIBUTION_ASC_BASE_URL`, but only to
+ * a loopback address, so no run can send credentials anywhere but this machine.
+ */
+export function ascBaseUrl(env: Readonly<Record<string, string | undefined>>): string | undefined {
+  const value = env[ASC_BASE_URL_ENV];
+  if (value === undefined || value === "") return undefined;
+  const url = new URL(value);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`${ASC_BASE_URL_ENV} must be http or https`);
+  if (!LOOPBACK_HOSTS.has(url.hostname)) throw new Error(`${ASC_BASE_URL_ENV} refused: only a loopback address (127.0.0.1 or ::1) may be set, not ${url.hostname}`);
+  return value;
+}
+
 export interface AppStoreConnectClientOptions {
   auth: AscAuth;
   fetch?: typeof fetch;
   now?: Date;
-  baseUrl?: string;
+  baseUrl?: string | undefined;
   retry?: RetryOptions;
 }
 
@@ -149,12 +165,13 @@ export function resolveProviderPublicId(manifest: { team: { teamId: string; prov
   };
 }
 
-export async function smokeAppStoreConnect(input: { configPath: string; fetch?: typeof fetch; now?: Date }): Promise<unknown> {
+export async function smokeAppStoreConnect(input: { configPath: string; fetch?: typeof fetch; now?: Date; baseUrl?: string | undefined }): Promise<unknown> {
   const auth = await loadAscAuth(input.configPath);
   const client = createAppStoreConnectClient({
     auth,
     ...(input.fetch ? { fetch: input.fetch } : {}),
-    ...(input.now ? { now: input.now } : {})
+    ...(input.now ? { now: input.now } : {}),
+    baseUrl: input.baseUrl
   });
   const result = await client.get("/v1/apps", { limit: "1" });
   return redactSecrets(result);
@@ -166,12 +183,14 @@ export async function getAppStoreConnect(input: {
   query?: Record<string, string>;
   fetch?: typeof fetch;
   now?: Date;
+  baseUrl?: string | undefined;
 }): Promise<unknown> {
   const auth = await loadAscAuth(input.configPath);
   const client = createAppStoreConnectClient({
     auth,
     ...(input.fetch ? { fetch: input.fetch } : {}),
-    ...(input.now ? { now: input.now } : {})
+    ...(input.now ? { now: input.now } : {}),
+    baseUrl: input.baseUrl
   });
   return redactSecrets(await client.get(input.path, input.query));
 }

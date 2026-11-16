@@ -26,17 +26,10 @@ describe("CLI scaffold", () => {
       stderr: (chunk) => stderr.push(chunk)
     });
 
-    await expect(cli(["--help"])).resolves.toBe(0);
+    await expect(cli(["--help", "--json"])).resolves.toBe(0);
     expect(stderr).toEqual([]);
-    expect(stdout.join("")).toContain("apple-distribution-kit");
-    expect(stdout.join("")).toContain("manifest");
-    expect(stdout.join("")).toContain("plan");
-    expect(stdout.join("")).toContain("store review-plan");
-    expect(stdout.join("")).toContain("testflight plan");
-    expect(stdout.join("")).toContain("testflight publish");
-    expect(stdout.join("")).toContain("xcode run");
-    expect(stdout.join("")).toContain("asc smoke");
-    expect(stdout.join("")).toContain("asc get");
+    const names = (JSON.parse(stdout.join("")) as { commands: { name: string }[] }).commands.map((command) => command.name);
+    expect(names).toEqual(expect.arrayContaining(["manifest validate", "plan", "store review-plan", "testflight plan", "testflight publish", "xcode run", "asc smoke", "asc get"]));
   });
 
   it("prints help for empty arguments", async () => {
@@ -44,7 +37,7 @@ describe("CLI scaffold", () => {
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
 
     await expect(cli([])).resolves.toBe(0);
-    expect(stdout.join("")).toContain("Usage:");
+    expect(stdout.join("")).toContain("manifest");
   });
 
   it("prints package version", async () => {

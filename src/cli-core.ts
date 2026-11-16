@@ -5,13 +5,15 @@ import { discoverConfigPath } from "./config.js";
 import { loadManifest } from "./manifest.js";
 import { createPlan, type PlanMode } from "./plan.js";
 import { planStoreSubmission } from "./store.js";
-import { getAppStoreConnect, smokeAppStoreConnect } from "./asc.js";
+import { ascBaseUrl, getAppStoreConnect, smokeAppStoreConnect } from "./asc.js";
 import { readReviewStatusFromConfig, REVIEW_PLATFORMS, reviewTransition, type ReviewPlatform } from "./review.js";
 import { redactSecrets } from "./redaction.js";
 import { checkLoginServices, collectLoginServiceSources } from "./login-services.js";
-import { signingCommand, signingUsage, type SigningCliDependencies } from "./signing-cli.js";
-import { developerCommand, developerUsage, type DeveloperCliDependencies } from "./developer-cli.js";
+import { signingCommand, type SigningCliDependencies } from "./signing-cli.js";
+import { developerCommand, type DeveloperCliDependencies } from "./developer-cli.js";
 import { EXIT } from "./exit-codes.js";
+import { cli as axCli } from "./command-table.js";
+import { runCli } from "./ouro-ax/cli.ts";
 import { buildTestFlightRequests, planTestFlightSubmission, publishTestFlightRequests } from "./testflight.js";
 import {
   buildXcodeCommand,
@@ -46,40 +48,9 @@ interface CliError {
   details?: unknown;
 }
 
-const usage = `apple-distribution-kit
-
-Usage:
-  apple-distribution-kit --help
-  apple-distribution-kit --version
-  apple-distribution-kit manifest validate [--manifest <path>] [--json]
-  apple-distribution-kit plan [--manifest <path>] [--mode dry-run|apply] [--json]
-  apple-distribution-kit store review-plan --channel <id> [--manifest <path>] [--artifact <path>] [--json]
-  apple-distribution-kit testflight plan --channel <id> [--manifest <path>] [--artifact <path>] [--json]
-  apple-distribution-kit testflight publish --channel <id> --app-id <id> --build-id <id> [--mode dry-run|apply] [--manifest <path>] [--config <path>] [--artifact <path>] [--group-id <name=id>] [--build-beta-detail-id <id>] [--beta-app-review-detail-id <id>] [--json]
-  apple-distribution-kit xcode run --kind <kind> --mode dry-run|apply [--json] [command options]
-  apple-distribution-kit asc smoke [--config <path>] [--json]
-  apple-distribution-kit asc get --path <path> [--query <name=value>] [--config <path>] [--json]
-  apple-distribution-kit review status --bundle-id <id> [--platform IOS|MAC_OS] [--config <path>] [--json]
-  apple-distribution-kit review login-services [--root <dir>] [--json]
-${signingUsage}
-${developerUsage}
-Commands:
-  manifest validate   Validate distribution/apple-distribution.json
-  plan                Build a machine-readable distribution plan
-  store review-plan   Build App Store review-prep actions/blockers
-  testflight plan     Build TestFlight publish actions/blockers
-  testflight publish  Build or apply TestFlight App Store Connect requests
-  xcode run           Build or run Apple toolchain commands behind an explicit mode gate
-  asc smoke           Verify App Store Connect API credentials without printing secrets
-  asc get             GET an App Store Connect API path with authenticated, redacted output
-  review status       App Review state of every App Store version and review submission (API key only;
-                      reading App Review's message text needs a web session, see README "App Review")
-  review login-services
-                      Pre-submission Guideline 4.8 check: a third-party login needs Sign in with Apple, its
-                      entitlement, and its button first. Exits 1 on any finding
-  signing             Long-lived CI signing: create the certificate once, then import it, fetch profiles and
-                      sign with no certificate created per run (see README "CI Signing")
-`;
+function runAxCli(io: CliIo, argv: string[]): Promise<number> {
+  return runCli(axCli, argv, { stdout: { write: (chunk) => io.stdout(String(chunk)) }, stderr: { write: (chunk) => io.stderr(String(chunk)) } });
+}
 
 export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
   const smoke = dependencies.smokeAppStoreConnect ?? smokeAppStoreConnect;
@@ -91,9 +62,8 @@ export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
     if (args[0] === "developer") return developerCommand(io, args, dependencies.developer);
     const json = takeFlag(args, "--json");
 
-    if (takeFlag(args, "--help") || args.length === 0) {
-      io.stdout(usage);
-      return 0;
+    if (takeFlag(args, "--help") || args.length === 0 || args[0] === "help") {
+      return runAxCli(io, argv.length === 0 ? ["--help"] : argv);
     }
 
     if (takeFlag(args, "--version")) {
@@ -157,7 +127,7 @@ async function ascSmokeCommand(
 ): Promise<number> {
   const configPath = optionValue(args, "--config") ?? discoverConfigPath({ env: process.env });
   try {
-    const result = await smoke({ configPath });
+    const result = await smoke({ configPath, baseUrl: ascBaseUrl(process.env) });
     if (json) {
       io.stdout(`${JSON.stringify({ ok: true, result }, null, 2)}\n`);
     } else {
@@ -257,10 +227,12 @@ async function ascGetCommand(
     });
   }
   try {
+    const baseUrl = ascBaseUrl(process.env);
     const result = await getAsc({
       configPath: optionValue(args, "--config") ?? discoverConfigPath({ env: process.env }),
       path,
-      query: parseNameValueOptions(optionValues(args, "--query"), "--query")
+      query: parseNameValueOptions(optionValues(args, "--query"), "--query"),
+      baseUrl
     });
     if (json) {
       io.stdout(`${JSON.stringify({ ok: true, result }, null, 2)}\n`);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defineExitCodes } from "../lib/ouro-ui/registry/ouro/ax/exit-codes.ts";
+import { defineExitCodes } from "../src/ouro-ax/exit-codes.ts";
 import { EXIT, EXIT_CODE_TABLE } from "../src/exit-codes.ts";
 
 describe("exit codes", () => {
