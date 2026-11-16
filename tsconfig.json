@@ -14,7 +14,9 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
-    "exactOptionalPropertyTypes": true
+    "exactOptionalPropertyTypes": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
   },
   "include": [
     "src/**/*.ts"

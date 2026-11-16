@@ -407,7 +407,7 @@ describe("collectLoginServiceSources", () => {
 
 describe("review login-services CLI", () => {
   it("lists the command in the usage text", async () => {
-    expect((await run(["--help"])).stdout).toContain("review login-services [--root <dir>] [--json]");
+    expect((await run(["--help", "--json"])).stdout).toContain("review login-services");
   });
 
   it("exits 1 and prints the ordering finding", async () => {

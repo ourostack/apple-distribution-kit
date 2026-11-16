@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { createCli } from "./cli-core.js";
+import { quietPipes } from "./ouro-ax/cli.ts";
+
+quietPipes(process);
 
 const cli = createCli({
   stdout: (chunk) => process.stdout.write(chunk),

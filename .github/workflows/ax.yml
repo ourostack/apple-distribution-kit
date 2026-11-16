@@ -1,0 +1,55 @@
+name: Ouro AX X-ray
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  xray:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Start the made-up App Store Connect mock on loopback
+        run: |
+          node scripts/xray-mock.mjs 4010 > "$RUNNER_TEMP/mock.log" 2>&1 &
+          for i in $(seq 1 50); do curl -fsS http://127.0.0.1:4010/__mock && break; sleep 0.2; done
+      - name: Ouro AX X-ray
+        # Non-blocking until every command family runs through the kit (the report records the musts); remove this line then.
+        continue-on-error: true
+        env:
+          MOCK_URL: http://127.0.0.1:4010
+        run: |
+          mkdir -p xray "$RUNNER_TEMP/xray-home"
+          node scripts/inventory.mjs > inventory.json
+          node src/ouro-ax/xray.ts --cli "node dist/cli.js" --inventory inventory.json \
+            --home "$RUNNER_TEMP/xray-home" --env "APPLE_DISTRIBUTION_ASC_BASE_URL=$MOCK_URL" \
+            --guard "node scripts/assert-mock.mjs" --state "manifest validate" \
+            --commit "$GITHUB_SHA" --json --md xray/xray.md > xray/report.json
+      - name: Action claims
+        run: |
+          mkdir -p xray-actions
+          node tools/ouro-actions/ouro-actions.mts check actions/apple-distribution-kit.actions.mts actions/generated \
+            --report xray-actions/report.json --app "Apple distribution kit" --commit "$GITHUB_SHA"
+      - name: Upload the X-ray
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xray
+          path: xray/
+      - name: Upload the action claims
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: actions-xray
+          path: xray-actions/

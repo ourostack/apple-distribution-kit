@@ -6,7 +6,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/cli.ts"],
+      exclude: ["src/cli.ts", "src/ouro-ax/**"],
       reporter: ["text", "json-summary"],
       thresholds: {
         lines: 100,

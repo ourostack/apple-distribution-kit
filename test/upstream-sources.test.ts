@@ -34,10 +34,10 @@ describe("upstream-sources.lock.json", () => {
     }
   });
 
-  it("lists every file vendored under lib/ouro-ui, so none is copied in by hand", () => {
-    const dir = join(root, "lib/ouro-ui/registry/ouro/ax");
-    const onDisk = readdirSync(dir).filter((name) => name.endsWith(".ts")).map((name) => `lib/ouro-ui/registry/ouro/ax/${name}`).sort();
-    const listed = lock.sources.flatMap((source) => source.files.map((file) => file.generatedPath)).filter((path) => path.startsWith("lib/ouro-ui/registry/ouro/ax/")).sort();
+  it("lists every file vendored under src/ouro-ax, so none is copied in by hand", () => {
+    const dir = join(root, "src/ouro-ax");
+    const onDisk = readdirSync(dir).filter((name) => name.endsWith(".ts")).map((name) => `src/ouro-ax/${name}`).sort();
+    const listed = lock.sources.flatMap((source) => source.files.map((file) => file.generatedPath)).filter((path) => path.startsWith("src/ouro-ax/") && path.endsWith(".ts")).sort();
     expect(listed).toEqual(onDisk);
   });
 });

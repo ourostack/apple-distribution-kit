@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The command list and `--help` come from one command table (`src/command-table.ts`), rendered by the vendored Ouro AX kit (`src/ouro-ax/`). `--help --json` is machine-readable and lists every command with its effect.
+- `APPLE_DISTRIBUTION_ASC_BASE_URL` points App Store Connect calls at a mock. It is refused unless the host is 127.0.0.1 or ::1.
+- The Ouro AX X-ray and the action-claims check run in CI (`.github/workflows/ax.yml`). The X-ray step does not yet block, because not every command family runs through the kit.
+
 ## 0.2.0
 
 **Breaking: exit codes.** The CLI now uses Ouro AX's exit table (0 ok, 1 error, 2 usage, then its own codes from 3). Before, it used sysexits.
