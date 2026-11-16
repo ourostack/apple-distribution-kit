@@ -14,6 +14,9 @@ import { developerCommand, type DeveloperCliDependencies } from "./developer-cli
 import { EXIT } from "./exit-codes.js";
 import { cli as axCli } from "./command-table.js";
 import { runCli } from "./ouro-ax/cli.ts";
+import { parse } from "./ouro-ax/command.ts";
+import { errorJson, errorLine, isAxError } from "./ouro-ax/problem.ts";
+import { DRY_RUN_FLAG } from "./ouro-ax/effects.ts";
 import { buildTestFlightRequests, planTestFlightSubmission, publishTestFlightRequests } from "./testflight.js";
 import {
   buildXcodeCommand,
@@ -52,19 +55,67 @@ function runAxCli(io: CliIo, argv: string[]): Promise<number> {
   return runCli(axCli, argv, { stdout: { write: (chunk) => io.stdout(String(chunk)) }, stderr: { write: (chunk) => io.stderr(String(chunk)) } });
 }
 
+/** Identifiers a developer command other people see takes, with what each is and where to take a right one. */
+const REFERENCES: readonly { flag: string; pattern: RegExp; what: string; where: string }[] = [
+  { flag: "team-id", pattern: /^[A-Z0-9]{10}$/, what: "a 10-character team id", where: "your team's id on developer.apple.com, under Membership" },
+  { flag: "key-id", pattern: /^[A-Z0-9]{10}$/, what: "a 10-character key id", where: "the key list on developer.apple.com, under Keys" },
+  { flag: "identifier", pattern: /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/, what: "a bundle-style identifier, such as app.example.web", where: "the identifiers list on developer.apple.com" },
+];
+
+/** A wrong reference to a developer command other people see is refused before anything runs, and says where to get one. */
+function wrongReference(io: CliIo, argv: string[], command: string): number | undefined {
+  if (!command.startsWith("developer ")) return undefined;
+  for (const { flag, pattern, what, where } of REFERENCES) {
+    const at = argv.indexOf(`--${flag}`);
+    const value = String(argv[at + 1]);
+    if (at < 0 || pattern.test(value)) continue;
+    const shape = { code: "bad-reference", exit: EXIT.usage, thing: command, problem: `--${flag} "${value}" is not ${what}`, fix: `take the right value from ${where}, then run it again` };
+    io.stderr(`${errorLine(axCli.name, shape)}\n`);
+    if (argv.includes("--json")) io.stdout(`${JSON.stringify(errorJson(shape), null, 2)}\n`);
+    return EXIT.usage;
+  }
+  return undefined;
+}
+
+/** The kit's check of a command line before it runs: unknown flags, missing arguments, a missing --why, a bad value. */
+function rejectedByKit(io: CliIo, argv: string[]): number | undefined {
+  const words = argv.filter((arg) => arg !== "--json");
+  if (words.length === 0 || words[0] === "help" || words.includes("--help") || words.includes("--version")) return undefined;
+  try {
+    const parsed = parse(axCli, argv);
+    return parsed.kind === "run" && parsed.command.effect === "others" ? wrongReference(io, argv, parsed.command.name) : undefined;
+  } catch (error) {
+    /* istanbul ignore if @preserve -- parse throws only the kit's AxError */
+    if (!isAxError(error)) throw error;
+    io.stderr(`${errorLine(axCli.name, error.shape)}\n`);
+    if (argv.includes("--json")) io.stdout(`${JSON.stringify(errorJson(error.shape), null, 2)}\n`);
+    return error.shape.exit;
+  }
+}
+
+/** Whether a `--dry-run` preview is the kit's (a command with its own `--dry-run`, such as revoke, keeps its own). */
+function previewThroughKit(argv: string[]): boolean {
+  if (!argv.includes("--dry-run")) return false;
+  const parsed = parse(axCli, argv);
+  return parsed.kind === "run" && parsed.input[DRY_RUN_FLAG] === true && parsed.command.flags?.["dry-run"] === undefined;
+}
+
 export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
   const smoke = dependencies.smokeAppStoreConnect ?? smokeAppStoreConnect;
   return async (argv: string[]) => {
+    const rejected = rejectedByKit(io, argv);
+    if (rejected !== undefined) return rejected;
+    if (previewThroughKit(argv)) return runAxCli(io, argv);
+    const words = argv.filter((arg) => arg !== "--json");
+    if (argv.includes("--help") || words.length === 0 || words[0] === "help") {
+      return runAxCli(io, words.length === 0 ? ["--help"] : argv);
+    }
     const args = [...argv];
     if (args[0] === "--json" && args[1] === "developer") {
       return developerCommand(io, [...args.slice(1), "--json"], dependencies.developer);
     }
     if (args[0] === "developer") return developerCommand(io, args, dependencies.developer);
     const json = takeFlag(args, "--json");
-
-    if (takeFlag(args, "--help") || args.length === 0 || args[0] === "help") {
-      return runAxCli(io, argv.length === 0 ? ["--help"] : argv);
-    }
 
     if (takeFlag(args, "--version")) {
       io.stdout(`${packageVersion()}\n`);
@@ -104,6 +155,7 @@ export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
       return ascGetCommand(io, json, args, dependencies.getAppStoreConnect ?? getAppStoreConnect);
     }
 
+    /* istanbul ignore else @preserve -- the kit refuses an unknown command before this runs */
     if (command === "signing") {
       return signingCommand(io, json, args, {
         exec: dependencies.executeXcodeCommand ?? executeRawCommand,
@@ -112,6 +164,7 @@ export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
       });
     }
 
+    /* istanbul ignore next @preserve -- the kit refuses an unknown command before this runs */
     return fail(io, json, EXIT.usage, {
       code: "unknown_command",
       message: `Unknown command: ${command}`
@@ -149,6 +202,7 @@ async function reviewStatusCommand(
   readStatus: typeof readReviewStatusFromConfig
 ): Promise<number> {
   const bundleId = optionValue(args, "--bundle-id");
+  /* istanbul ignore if @preserve -- the kit requires --bundle-id before this runs */
   if (!bundleId) {
     return fail(io, json, EXIT.usage, { code: "missing_bundle_id", message: "review status requires --bundle-id <id>" });
   }
@@ -180,6 +234,7 @@ async function reviewStatusCommand(
 }
 
 async function reviewLoginServicesCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
+  /* istanbul ignore if @preserve -- the kit refuses a --root with no value before this runs */
   if (args.includes("--root") && !optionValue(args, "--root")) {
     return fail(io, json, EXIT.usage, { code: "missing_root", message: "review login-services --root needs a directory" });
   }
@@ -220,6 +275,7 @@ async function ascGetCommand(
   getAsc: typeof getAppStoreConnect
 ): Promise<number> {
   const path = optionValue(args, "--path");
+  /* istanbul ignore if @preserve -- the kit requires --path before this runs */
   if (!path) {
     return fail(io, json, EXIT.usage, {
       code: "missing_path",
@@ -250,6 +306,7 @@ async function ascGetCommand(
 
 async function planCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
   const modeValue = optionValue(args, "--mode") ?? "dry-run";
+  /* istanbul ignore if @preserve -- the kit refuses a bad --mode before this runs */
   if (!isPlanMode(modeValue)) {
     return fail(io, json, EXIT.usage, {
       code: "invalid_mode",
@@ -279,6 +336,7 @@ async function planCommand(io: CliIo, json: boolean, args: string[]): Promise<nu
 
 async function storeReviewPlanCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
   const channelId = optionValue(args, "--channel");
+  /* istanbul ignore if @preserve -- the kit requires --channel before this runs */
   if (!channelId) {
     return fail(io, json, EXIT.usage, {
       code: "missing_channel",
@@ -314,6 +372,7 @@ async function storeReviewPlanCommand(io: CliIo, json: boolean, args: string[]):
 
 async function testFlightPlanCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
   const channelId = optionValue(args, "--channel");
+  /* istanbul ignore if @preserve -- the kit requires --channel before this runs */
   if (!channelId) {
     return fail(io, json, EXIT.usage, {
       code: "missing_channel",
@@ -354,6 +413,7 @@ async function testFlightPublishCommand(
   publish: typeof publishTestFlightRequests
 ): Promise<number> {
   const modeValue = optionValue(args, "--mode") ?? "dry-run";
+  /* istanbul ignore if @preserve -- the kit refuses a bad --mode before this runs */
   if (!isRunMode(modeValue)) {
     return fail(io, json, EXIT.usage, {
       code: "invalid_mode",
@@ -363,6 +423,7 @@ async function testFlightPublishCommand(
   const channelId = optionValue(args, "--channel");
   const appId = optionValue(args, "--app-id");
   const buildId = optionValue(args, "--build-id");
+  /* istanbul ignore if @preserve -- the kit requires --channel, --app-id and --build-id before this runs */
   if (!channelId || !appId || !buildId) {
     return fail(io, json, EXIT.usage, {
       code: "missing_testflight_publish_input",
@@ -435,6 +496,7 @@ async function xcodeRunCommand(
   execute: (argv: string[]) => Promise<RawCommandResult>
 ): Promise<number> {
   const modeValue = optionValue(args, "--mode") ?? "dry-run";
+  /* istanbul ignore if @preserve -- the kit refuses a bad --mode before this runs */
   if (!isRunMode(modeValue)) {
     return fail(io, json, EXIT.usage, {
       code: "invalid_mode",
@@ -443,6 +505,7 @@ async function xcodeRunCommand(
   }
 
   const kindValue = optionValue(args, "--kind");
+  /* istanbul ignore if @preserve -- the kit requires a known --kind before this runs */
   if (!kindValue || !isXcodeCommandKind(kindValue)) {
     return fail(io, json, EXIT.usage, {
       code: "invalid_kind",

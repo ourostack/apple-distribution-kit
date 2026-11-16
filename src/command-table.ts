@@ -1,18 +1,23 @@
 import { defineCli, defineCommand, type FlagSpec } from "./ouro-ax/command.ts";
 import { defineExitCodes } from "./ouro-ax/exit-codes.ts";
+import { outcome } from "./ouro-ax/outcome.ts";
 import { EXIT_CODE_TABLE } from "./exit-codes.ts";
 
 const flag = (type: FlagSpec["type"], description: string, extra: Partial<FlagSpec> = {}): FlagSpec => ({ type, description, ...extra });
 
 const manifest = flag("string", "Path to the manifest. Defaults to distribution/apple-distribution.json.");
 const config = flag("string", "Path to the config file with the App Store Connect API key settings.");
+const artifact = flag("string", "A built package to check.");
+const channel = flag("string", "The channel id in the manifest.", { required: true });
 const teamId = flag("string", "The Apple Developer team id.", { required: true });
 const sessionFile = flag("string", "A private session file made by `developer session import`.", { required: true });
 const environment = flag("string", "A label for the environment, such as test.", { required: true });
 const planFile = flag("string", "A private plan file made by a plan command.", { required: true });
 const retries = flag("number", "How many times to retry a failed App Store Connect call.", { min: 1, max: 10 });
+const keychain = flag("string", "The keychain path.", { required: true });
+const mode = (values: readonly string[]) => flag("enum", `${values.join(" or ")}.`, { values: [...values] });
 
-export const commands = [
+const declared = [
   defineCommand({
     name: "manifest validate",
     summary: "Validate the distribution manifest and say whether it is valid.",
@@ -25,21 +30,21 @@ export const commands = [
     name: "plan",
     summary: "Build a machine-readable distribution plan.",
     effect: "private",
-    flags: { manifest, mode: flag("enum", "dry-run or apply.", { values: ["dry-run", "apply"] }) },
+    flags: { manifest, mode: mode(["dry-run", "apply"]) },
   }),
   defineCommand({
     name: "store review-plan",
     summary: "Build App Store review-prep actions and blockers. Reads the manifest only.",
     effect: "private",
     readOnly: true,
-    flags: { channel: flag("string", "The channel id in the manifest.", { required: true }), manifest, artifact: flag("string", "A built package to check.") },
+    flags: { channel, manifest, artifact },
   }),
   defineCommand({
     name: "testflight plan",
     summary: "Build TestFlight publish actions and blockers. Reads the manifest only.",
     effect: "private",
     readOnly: true,
-    flags: { channel: flag("string", "The channel id in the manifest.", { required: true }), manifest, artifact: flag("string", "A built package to check.") },
+    flags: { channel, manifest, artifact },
   }),
   defineCommand({
     name: "testflight publish",
@@ -47,14 +52,14 @@ export const commands = [
     effect: "others",
     why: "required",
     flags: {
-      channel: flag("string", "The channel id in the manifest.", { required: true }),
+      channel,
       "app-id": flag("string", "The App Store Connect app id.", { required: true }),
       "build-id": flag("string", "The processed build id.", { required: true }),
-      mode: flag("enum", "dry-run builds the requests; apply sends them.", { values: ["dry-run", "apply"] }),
+      mode: mode(["dry-run", "apply"]),
       manifest,
       config,
-      artifact: flag("string", "The built package."),
-      "group-id": flag("list", "name=id of a beta group."),
+      artifact,
+      "group-id": flag("string", "name=id of a beta group.", { repeat: true }),
       "build-beta-detail-id": flag("string", "The build's beta detail id."),
       "beta-app-review-detail-id": flag("string", "The beta app review detail id."),
     },
@@ -69,10 +74,25 @@ export const commands = [
         required: true,
         values: ["codesign", "productbuild", "notary-submit", "stapler", "stapler-validate", "spctl", "altool-validate", "altool-upload"],
       }),
-      mode: flag("enum", "dry-run prints the command; apply runs it.", { values: ["dry-run", "apply"] }),
+      mode: mode(["dry-run", "apply"]),
       path: flag("string", "The file to act on."),
+      identity: flag("string", "The signing identity."),
+      entitlements: flag("string", "An entitlements plist."),
+      component: flag("string", "The component to package."),
+      "install-location": flag("string", "Where the installer package installs."),
+      output: flag("string", "Where the output is written."),
       "package-path": flag("string", "The package to upload or validate."),
       platform: flag("string", "macos, ios, appletvos or visionos, for altool."),
+      "apple-id": flag("string", "The Apple ID for notarization."),
+      "team-id": flag("string", "The team id for notarization."),
+      "password-keychain-item": flag("string", "The keychain item holding the notarization password."),
+      "provider-public-id": flag("string", "The provider public id for altool."),
+      "api-key": flag("string", "The App Store Connect API key id."),
+      "api-issuer": flag("string", "The App Store Connect API issuer id."),
+      "p8-file-path": flag("string", "The App Store Connect API private key file."),
+      username: flag("string", "The Apple ID for altool."),
+      password: flag("string", "The app-specific password for altool."),
+      "no-wait": flag("boolean", "Return once the package is delivered, without waiting for processing."),
     },
   }),
   defineCommand({
@@ -89,7 +109,7 @@ export const commands = [
     readOnly: true,
     flags: {
       path: flag("string", "The API path, such as /v1/apps.", { required: true }),
-      query: flag("list", "name=value query parameters."),
+      query: flag("string", "name=value query parameters.", { repeat: true }),
       config,
     },
   }),
@@ -116,6 +136,7 @@ export const commands = [
       "out-dir": flag("string", "Where the key and certificate are written.", { required: true }),
       "certificate-type": flag("string", "The certificate type, such as DISTRIBUTION."),
       "common-name": flag("string", "The certificate's common name."),
+      "name-prefix": flag("string", "A prefix for the certificate's name."),
       openssl: flag("string", "The openssl binary to use."),
       config,
     },
@@ -125,7 +146,7 @@ export const commands = [
     summary: "Import the CI certificate into a keychain from named environment variables.",
     effect: "private",
     flags: {
-      keychain: flag("string", "The keychain path.", { required: true }),
+      keychain,
       state: flag("string", "The signing state file.", { required: true }),
       "p12-base64-env": flag("string", "The env var holding the base64 .p12."),
       "password-env": flag("string", "The env var holding the .p12 password."),
@@ -139,18 +160,21 @@ export const commands = [
     flags: {
       state: flag("string", "The signing state file.", { required: true }),
       "team-id": flag("string", "The team id.", { required: true }),
-      "bundle-id": flag("list", "A bundle id to fetch a profile for.", { required: true }),
+      "bundle-id": flag("string", "A bundle id to fetch a profile for.", { required: true, repeat: true }),
       xcconfig: flag("string", "Where the xcconfig is written.", { required: true }),
       "export-options": flag("string", "Where the export options plist is written.", { required: true }),
       "export-options-base": flag("string", "An export options plist to start from."),
       "profile-type": flag("string", "The profile type."),
+      "install-dir": flag("string", "Where the profiles are installed."),
+      "identity-sha1": flag("string", "The signing identity's SHA-1."),
+      "name-prefix": flag("string", "A prefix for the profile names."),
     },
   }),
   defineCommand({
     name: "signing delete-keychain",
     summary: "Delete the CI keychain.",
     effect: "private",
-    flags: { keychain: flag("string", "The keychain path.", { required: true }) },
+    flags: { keychain },
   }),
   defineCommand({
     name: "signing snapshot-certificates",
@@ -213,6 +237,7 @@ export const commands = [
       "key-name": flag("string", "The key's name."),
       "key-id": flag("string", "The key id, for revoke or download."),
       output: flag("string", "Where the plan is written."),
+      "plan-file": flag("string", "A private plan file, as the other lifecycle commands take."),
     },
   }),
   defineCommand({
@@ -262,6 +287,28 @@ export const commands = [
     flags: { "team-id": teamId, environment, "session-file": sessionFile, "plan-file": planFile },
   }),
 ];
+
+/** What each command other people see would do, and who would see it: its `--dry-run` preview. */
+const PREVIEWS: Readonly<Record<string, readonly [who: string, summary: string]>> = {
+  "testflight publish": ["the testers in the beta groups named in the manifest", "Would send the TestFlight requests to App Store Connect."],
+  "xcode run": ["anyone with access to the app's upload or notarization", "Would run the Apple toolchain command, which can upload or notarize the build."],
+  "signing create-certificate": ["everyone who signs builds with this account", "Would create a signing certificate on the Apple account."],
+  "signing profiles": ["everyone who installs the app's profiles", "Would fetch and write the provisioning profiles and signing settings."],
+  "developer keys apply": ["everyone whose builds use these portal keys", "Would create or revoke the developer portal keys in the plan."],
+  "developer keys reconcile": ["everyone whose builds use these portal keys", "Would apply the missing developer portal keys in the plan."],
+  "developer services apply": ["everyone who signs in with these Services IDs", "Would change the developer portal Services IDs in the plan."],
+  "developer services reconcile": ["everyone who signs in with these Services IDs", "Would apply the missing developer portal Services IDs in the plan."],
+};
+
+export const commands = declared.map((command) => {
+  const preview = PREVIEWS[command.name];
+  if (!preview) return command;
+  const [who, summary] = preview;
+  return {
+    ...command,
+    plan: () => outcome({ action: command.name, effect: "others", audience: { only: false, who }, state: "planned", summary: `${summary} ${who.charAt(0).toUpperCase()}${who.slice(1)} would see it. Nothing is sent in a preview.` }),
+  };
+});
 
 export const cli = defineCli({
   name: "apple-distribution-kit",

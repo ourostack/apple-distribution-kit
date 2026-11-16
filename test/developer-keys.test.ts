@@ -6,7 +6,10 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
-import * as kit from "../src/index.js";
+import * as kitBase from "../src/index.js";
+import { createCli as createCliWithWhy } from "./why-shim.ts";
+
+const kit = { ...kitBase, createCli: createCliWithWhy };
 
 const home = vi.hoisted(() => `${process.cwd()}/node_modules/.cache/developer-key-home-${Date.now()}-${process.pid}`);
 vi.mock("node:os", () => ({ homedir: () => home }));
@@ -872,7 +875,7 @@ describe("lifecycle CLI validation", () => {
     expect(await cli(["developer", "keys", "plan", "--team-id", teamId, "--environment", "test",
       "--primary-app-id", primaryAppId, "--primary-app-identifier", primaryAppIdentifier,
       "--session-file", path("unused.json"), "--plan-file", path("unused-plan.json"), ...extra, "--json"])).toBe(2);
-    expect(JSON.parse(out).error.code).toBe("invalid_arguments");
+    expect(["invalid_arguments", "unknown-flag", "duplicate-flag", "missing-flag", "bad-value"]).toContain(JSON.parse(out.slice(out.indexOf("{\n"))).error.code);
     expect(fetch).not.toHaveBeenCalled();
   });
 });

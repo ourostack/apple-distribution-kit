@@ -25,14 +25,12 @@ jobs:
           node scripts/xray-mock.mjs 4010 > "$RUNNER_TEMP/mock.log" 2>&1 &
           for i in $(seq 1 50); do curl -fsS http://127.0.0.1:4010/__mock && break; sleep 0.2; done
       - name: Ouro AX X-ray
-        # Non-blocking until every command family runs through the kit (the report records the musts); remove this line then.
-        continue-on-error: true
         env:
           MOCK_URL: http://127.0.0.1:4010
         run: |
           mkdir -p xray "$RUNNER_TEMP/xray-home"
           node scripts/inventory.mjs > inventory.json
-          node src/ouro-ax/xray.ts --cli "node dist/cli.js" --inventory inventory.json \
+          node src/ouro-ax/xray.ts --cli "node dist/cli.js" --name apple-distribution-kit --inventory inventory.json \
             --home "$RUNNER_TEMP/xray-home" --env "APPLE_DISTRIBUTION_ASC_BASE_URL=$MOCK_URL" \
             --guard "node scripts/assert-mock.mjs" --state "manifest validate" \
             --commit "$GITHUB_SHA" --json --md xray/xray.md > xray/report.json

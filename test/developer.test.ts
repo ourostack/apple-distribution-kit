@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { CookieJar } from "tough-cookie";
 import { DeveloperError, type CliDependencies, type DeveloperClient, type DeveloperEnrollment, type DeveloperErrorCode, type DeveloperSession } from "../src/index.js";
-import * as kit from "../src/index.js";
+import * as kitBase from "../src/index.js";
+import { createCli as createCliWithWhy } from "./why-shim.ts";
+
+const kit = { ...kitBase, createCli: createCliWithWhy };
 
 const teamId = "743GT2AJ24";
 const secret = "COOKIE_SECRET_MUST_NOT_LEAK";
@@ -579,12 +582,12 @@ describe("Developer CLI", () => {
     ["developer", "keys", "list", "--team-id", teamId, "extra"],
     ["developer", "session", "import", "--team-id", teamId, "--input"],
     ["developer", "status", "--team-id", teamId, "--json", "--json"],
-    ["developer", "status", "--team-id", teamId, "--help", secret]
+    ["developer", "status", "--team-id", teamId, "--session-file", "s.json", "--session-file", "s.json"]
   ])("rejects malformed options without echoing input %#", async (...args) => {
     let output = "";
     const cli = kit.createCli({ stdout: x => { output += x; }, stderr: x => { output += x; } });
     expect(await cli([...args, ...(args.includes("--json") ? [] : ["--json"])])).toBe(2);
-    expect(JSON.parse(output).error.exit).toBe(2);
+    expect(JSON.parse(output.slice(output.indexOf("{\n"))).error.exit).toBe(2);
     expect(output).not.toContain(secret);
   });
 
@@ -655,7 +658,7 @@ describe("Developer CLI", () => {
     expect(JSON.parse(output).result.ready).toBe(true);
     output = "";
     expect(await cli(["--json", "developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(2);
-    expect(JSON.parse(output).error.code).toBe("invalid_arguments");
+    expect(JSON.parse(output.slice(output.indexOf("{\n"))).error.code).toBe("duplicate-flag");
   });
 
   it.each([false, true])("sanitizes exception, key payload and CSRF values in CLI errors (json=%s)", async json => {

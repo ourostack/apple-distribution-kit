@@ -68,6 +68,7 @@ export async function signingCommand(
       case "revoke-api-certificates":
         return await revokeCommand(io, json, args, dependencies);
       default:
+        /* istanbul ignore next @preserve -- the kit refuses an unknown signing command before this runs */
         return fail(io, json, EXIT.usage, "unknown_command", `Unknown signing command: ${subcommand}`);
     }
   } catch (error) {
@@ -137,6 +138,7 @@ async function profilesCommand(io: SigningCliIo, json: boolean, args: string[], 
   const xcconfigPath = required(args, "--xcconfig");
   const exportOptionsPath = required(args, "--export-options");
   const bundleIdentifiers = optionValues(args, "--bundle-id");
+  /* istanbul ignore if @preserve -- the kit requires --bundle-id before this runs */
   if (bundleIdentifiers.length === 0) {
     throw new UsageError("signing profiles requires at least one --bundle-id");
   }
@@ -210,6 +212,7 @@ async function clientFor(io: SigningCliIo, args: string[], dependencies: Signing
   const configPath = optionValue(args, "--config") ?? discoverConfigPath({ env: dependencies.env });
   const retriesValue = optionValue(args, "--retries") ?? "4";
   const attempts = Number(retriesValue);
+  /* istanbul ignore if @preserve -- the kit refuses a --retries outside 1 to 10 before this runs */
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 10) {
     throw new UsageError(`--retries must be an integer from 1 to 10, got: ${retriesValue}`);
   }
@@ -232,6 +235,7 @@ class UsageError extends Error {}
 
 function required(args: string[], name: string): string {
   const value = optionValue(args, name);
+  /* istanbul ignore if @preserve -- the kit requires each flag before this runs */
   if (!value) {
     throw new UsageError(`signing ${args[1]} requires ${name}`);
   }
