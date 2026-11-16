@@ -1,0 +1,116 @@
+{
+  "generator": "ouro-actions 0.16.0",
+  "set": "apple-distribution-kit",
+  "tool": "apple-distribution-kit",
+  "actions": [
+    {
+      "id": "manifest_validate",
+      "consent": "read",
+      "label": "Validate manifest",
+      "description": "Check that the distribution manifest is valid.",
+      "agent": "Validate the distribution manifest and say whether it is valid. Read-only.",
+      "input": {
+        "manifest": {
+          "label": "Manifest",
+          "description": "Path to the manifest. Defaults to distribution/apple-distribution.json.",
+          "optional": true,
+          "kind": "string"
+        }
+      },
+      "output": {
+        "ok": {
+          "label": "Valid",
+          "description": "True when the manifest is valid.",
+          "kind": "boolean"
+        },
+        "manifestPath": {
+          "label": "Manifest path",
+          "description": "The manifest that was checked.",
+          "kind": "string"
+        }
+      },
+      "cli": "manifest validate"
+    },
+    {
+      "id": "asc_smoke",
+      "consent": "read",
+      "label": "Check App Store Connect access",
+      "description": "Check that the App Store Connect API credentials work.",
+      "agent": "Verify App Store Connect API credentials without printing secrets. Read-only.",
+      "input": {
+        "config": {
+          "label": "Config",
+          "description": "Path to the config file with the API key settings.",
+          "optional": true,
+          "kind": "string"
+        }
+      },
+      "output": {
+        "ok": {
+          "label": "Working",
+          "description": "True when the credentials authenticate.",
+          "kind": "boolean"
+        }
+      },
+      "cli": "asc smoke"
+    },
+    {
+      "id": "review_status",
+      "consent": "read",
+      "label": "App Review status",
+      "description": "See the App Review state of each version of the app.",
+      "agent": "Read the App Review state of every App Store version and review submission for one bundle id. Read-only.",
+      "input": {
+        "bundleId": {
+          "label": "Bundle id",
+          "description": "The app's bundle identifier.",
+          "arg": true,
+          "kind": "string"
+        },
+        "platform": {
+          "label": "Platform",
+          "description": "IOS or MAC_OS. Defaults to both.",
+          "optional": true,
+          "kind": "string"
+        },
+        "config": {
+          "label": "Config",
+          "description": "Path to the config file with the API key settings.",
+          "optional": true,
+          "kind": "string"
+        }
+      },
+      "output": {
+        "versions": {
+          "label": "Versions",
+          "description": "JSON: one entry per App Store version and review submission, with its state.",
+          "kind": "string"
+        }
+      },
+      "cli": "review status"
+    },
+    {
+      "id": "review_login_services",
+      "consent": "read",
+      "label": "Check third-party login",
+      "description": "Check that a third-party login offers Sign in with Apple before review.",
+      "agent": "Run the Guideline 4.8 pre-submission check on a project folder. Exits 1 on any finding. Read-only.",
+      "input": {
+        "root": {
+          "label": "Project folder",
+          "description": "The project folder to check. Defaults to the current folder.",
+          "optional": true,
+          "kind": "string"
+        }
+      },
+      "output": {
+        "findings": {
+          "label": "Findings",
+          "description": "JSON: one entry per finding.",
+          "kind": "string"
+        }
+      },
+      "cli": "review login-services"
+    }
+  ]
+}
