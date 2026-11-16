@@ -1,0 +1,71 @@
+{
+  "generator": "ouro-actions 0.16.0",
+  "set": "apple-distribution-kit",
+  "tool": "apple-distribution-kit",
+  "commands": [
+    {
+      "name": "manifest validate",
+      "summary": "Validate the distribution manifest and say whether it is valid. Read-only.",
+      "effect": "private",
+      "readOnly": true,
+      "flags": {
+        "manifest": {
+          "type": "string",
+          "description": "Path to the manifest. Defaults to distribution/apple-distribution.json."
+        }
+      },
+      "output": "{ ok, manifestPath }"
+    },
+    {
+      "name": "asc smoke",
+      "summary": "Verify App Store Connect API credentials without printing secrets. Read-only.",
+      "effect": "private",
+      "readOnly": true,
+      "flags": {
+        "config": {
+          "type": "string",
+          "description": "Path to the config file with the API key settings."
+        }
+      },
+      "output": "{ ok }"
+    },
+    {
+      "name": "review status",
+      "summary": "Read the App Review state of every App Store version and review submission for one bundle id. Read-only.",
+      "effect": "private",
+      "readOnly": true,
+      "args": [
+        {
+          "name": "bundleId",
+          "description": "The app's bundle identifier.",
+          "required": true
+        }
+      ],
+      "flags": {
+        "platform": {
+          "type": "string",
+          "description": "IOS or MAC_OS. Defaults to both."
+        },
+        "config": {
+          "type": "string",
+          "description": "Path to the config file with the API key settings."
+        }
+      },
+      "output": "{ versions }"
+    },
+    {
+      "name": "review login-services",
+      "summary": "Run the Guideline 4.8 pre-submission check on a project folder. Exits 1 on any finding. Read-only.",
+      "effect": "private",
+      "readOnly": true,
+      "flags": {
+        "root": {
+          "type": "string",
+          "description": "The project folder to check. Defaults to the current folder."
+        }
+      },
+      "output": "{ findings }"
+    }
+  ],
+  "personOnly": {}
+}
