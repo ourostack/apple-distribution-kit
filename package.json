@@ -1,6 +1,6 @@
 {
   "name": "apple-distribution-kit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Reusable Apple distribution automation for native apps.",
   "type": "module",
   "bin": {

@@ -52,7 +52,7 @@ describe("CLI scaffold", () => {
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
 
     await expect(cli(["--version"])).resolves.toBe(0);
-    expect(stdout.join("").trim()).toMatch(/^0\.1\.0$/);
+    expect(stdout.join("").trim()).toMatch(/^0\.2\.0$/);
   });
 
   it("returns structured JSON for unknown commands", async () => {
@@ -60,14 +60,10 @@ describe("CLI scaffold", () => {
     const stderr: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: (chunk) => stderr.push(chunk) });
 
-    await expect(cli(["--json", "nope"])).resolves.toBe(64);
+    await expect(cli(["--json", "nope"])).resolves.toBe(2);
     expect(stderr).toEqual([]);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: {
-        code: "unknown_command",
-        message: "Unknown command: nope"
-      }
+      error: expect.objectContaining({ exit: 2, code: "unknown_command", message: "Unknown command: nope" })
     });
   });
 
@@ -76,7 +72,7 @@ describe("CLI scaffold", () => {
     const stderr: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: (chunk) => stderr.push(chunk) });
 
-    await expect(cli(["nope"])).resolves.toBe(64);
+    await expect(cli(["nope"])).resolves.toBe(2);
     expect(stdout).toEqual([]);
     expect(stderr.join("")).toBe("Unknown command: nope\n");
   });
@@ -85,8 +81,8 @@ describe("CLI scaffold", () => {
     const stdout: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
 
-    await expect(cli(["--json", "manifest", "validate"])).resolves.toBe(65);
-    expect(JSON.parse(stdout.join("")).ok).toBe(false);
+    await expect(cli(["--json", "manifest", "validate"])).resolves.toBe(3);
+    expect(JSON.parse(stdout.join("")).error.exit).toBe(3);
     expect(JSON.parse(stdout.join("")).error.code).toBe("manifest_invalid");
   });
 
@@ -216,13 +212,12 @@ describe("CLI scaffold", () => {
     const stdout: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
 
-    await expect(cli(["--json", "plan", "--mode", "publish"])).resolves.toBe(64);
+    await expect(cli(["--json", "plan", "--mode", "publish"])).resolves.toBe(2);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "invalid_mode",
         message: "Unknown plan mode: publish"
-      }
+      })
     });
   });
 
@@ -230,7 +225,7 @@ describe("CLI scaffold", () => {
     const stdout: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
 
-    await expect(cli(["--json", "plan", "--manifest", "/tmp/does-not-exist-adk.json"])).resolves.toBe(65);
+    await expect(cli(["--json", "plan", "--manifest", "/tmp/does-not-exist-adk.json"])).resolves.toBe(3);
     expect(JSON.parse(stdout.join("")).error.code).toBe("plan_failed");
   });
 
@@ -436,23 +431,21 @@ describe("CLI scaffold", () => {
     expect(stdout.join("")).toBe("TestFlight plan: 7 actions, 0 blockers\n");
 
     stdout.splice(0);
-    await expect(cli(["--json", "testflight", "plan", "--manifest", manifestPath, "--channel", "missing"])).resolves.toBe(65);
+    await expect(cli(["--json", "testflight", "plan", "--manifest", manifestPath, "--channel", "missing"])).resolves.toBe(3);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "testflight_plan_failed",
         message: "TestFlight channel not found or incomplete: missing"
-      }
+      })
     });
 
     stdout.splice(0);
-    await expect(cli(["--json", "testflight", "plan", "--manifest", manifestPath])).resolves.toBe(64);
+    await expect(cli(["--json", "testflight", "plan", "--manifest", manifestPath])).resolves.toBe(2);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "missing_channel",
         message: "testflight plan requires --channel <id>"
-      }
+      })
     });
   });
 
@@ -617,13 +610,12 @@ describe("CLI scaffold", () => {
         "--group-id",
         "missing-separator"
       ])
-    ).resolves.toBe(65);
+    ).resolves.toBe(3);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "testflight_publish_failed",
         message: "Expected --group-id value to be name=id, got: missing-separator"
-      }
+      })
     });
   });
 
@@ -646,8 +638,8 @@ describe("CLI scaffold", () => {
     const stdout: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
 
-    await expect(cli(argv)).resolves.toBe(64);
-    expect(JSON.parse(stdout.join(""))).toEqual({ ok: false, error });
+    await expect(cli(argv)).resolves.toBe(2);
+    expect(JSON.parse(stdout.join(""))).toEqual({ error: expect.objectContaining(error) });
   });
 
   it("rejects invalid altool platforms", async () => {
@@ -670,13 +662,12 @@ describe("CLI scaffold", () => {
         "--api-issuer",
         "issuer"
       ])
-    ).resolves.toBe(64);
+    ).resolves.toBe(2);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "missing_option",
         message: "xcode run altool --platform must be macos, ios, appletvos, or visionos"
-      }
+      })
     });
   });
 
@@ -1109,7 +1100,7 @@ describe("CLI scaffold", () => {
     const validateCli = createCli({ stdout: (chunk) => validateStdout.push(chunk), stderr: () => undefined });
     await expect(
       validateCli(["--json", "xcode", "run", "--kind", "altool-validate", "--mode", "dry-run", "--package-path", "App.ipa", "--api-key", "KEY", "--api-issuer", "issuer", "--no-wait"])
-    ).resolves.toBe(64);
+    ).resolves.toBe(2);
     expect(JSON.parse(validateStdout.join("")).error.message).toBe("xcode run --no-wait applies only to --kind altool-upload");
   });
 
@@ -1158,50 +1149,48 @@ describe("CLI scaffold", () => {
   it("returns structured xcode run option and executor errors", async () => {
     const invalidMode: string[] = [];
     const invalidModeCli = createCli({ stdout: (chunk) => invalidMode.push(chunk), stderr: () => undefined });
-    await expect(invalidModeCli(["--json", "xcode", "run", "--mode", "live"])).resolves.toBe(64);
+    await expect(invalidModeCli(["--json", "xcode", "run", "--mode", "live"])).resolves.toBe(2);
     expect(JSON.parse(invalidMode.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "invalid_mode",
         message: "Unknown xcode run mode: live"
-      }
+      })
     });
 
     const invalidKind: string[] = [];
     const invalidKindCli = createCli({ stdout: (chunk) => invalidKind.push(chunk), stderr: () => undefined });
-    await expect(invalidKindCli(["--json", "xcode", "run", "--kind", "nope"])).resolves.toBe(64);
+    await expect(invalidKindCli(["--json", "xcode", "run", "--kind", "nope"])).resolves.toBe(2);
     expect(JSON.parse(invalidKind.join("")).error.code).toBe("invalid_kind");
 
     const missingOption: string[] = [];
     const missingOptionCli = createCli({ stdout: (chunk) => missingOption.push(chunk), stderr: () => undefined });
     await expect(
       missingOptionCli(["--json", "xcode", "run", "--kind", "codesign", "--path", "OuroMD.app", "--entitlements", "entitlements.plist"])
-    ).resolves.toBe(64);
+    ).resolves.toBe(2);
     expect(JSON.parse(missingOption.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "missing_option",
         message: "xcode run requires --identity"
-      }
+      })
     });
 
     const missingAuth: string[] = [];
     const missingAuthCli = createCli({ stdout: (chunk) => missingAuth.push(chunk), stderr: () => undefined });
     await expect(
       missingAuthCli(["--json", "xcode", "run", "--kind", "altool-upload", "--package-path", "OuroMD.pkg", "--api-key", "KEY"])
-    ).resolves.toBe(64);
+    ).resolves.toBe(2);
     expect(JSON.parse(missingAuth.join("")).error.message).toBe("xcode run altool API auth requires both --api-key and --api-issuer");
 
     const missingPackage: string[] = [];
     const missingPackageCli = createCli({ stdout: (chunk) => missingPackage.push(chunk), stderr: () => undefined });
     await expect(
       missingPackageCli(["--json", "xcode", "run", "--kind", "altool-upload", "--username", "ari@example.com", "--password", "app-password"])
-    ).resolves.toBe(64);
+    ).resolves.toBe(2);
     expect(JSON.parse(missingPackage.join("")).error.message).toBe("xcode run requires --package-path for altool commands");
 
     const missingAnyAuth: string[] = [];
     const missingAnyAuthCli = createCli({ stdout: (chunk) => missingAnyAuth.push(chunk), stderr: () => undefined });
-    await expect(missingAnyAuthCli(["--json", "xcode", "run", "--kind", "altool-upload", "--package-path", "OuroMD.pkg"])).resolves.toBe(64);
+    await expect(missingAnyAuthCli(["--json", "xcode", "run", "--kind", "altool-upload", "--package-path", "OuroMD.pkg"])).resolves.toBe(2);
     expect(JSON.parse(missingAnyAuth.join("")).error.message).toBe("xcode run altool commands require API key auth or --username and --password");
 
     const thrown: string[] = [];
@@ -1213,13 +1202,12 @@ describe("CLI scaffold", () => {
         }
       }
     );
-    await expect(thrownCli(["--json", "xcode", "run", "--kind", "spctl", "--mode", "apply", "--path", "OuroMD.app"])).resolves.toBe(69);
+    await expect(thrownCli(["--json", "xcode", "run", "--kind", "spctl", "--mode", "apply", "--path", "OuroMD.app"])).resolves.toBe(5);
     expect(JSON.parse(thrown.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "xcode_run_failed",
         message: "tool missing"
-      }
+      })
     });
   });
 
@@ -1232,13 +1220,12 @@ describe("CLI scaffold", () => {
 
     await expect(
       cli(["--json", "store", "review-plan", "--manifest", manifestPath, "--channel", "missing"])
-    ).resolves.toBe(65);
+    ).resolves.toBe(3);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "store_review_plan_failed",
         message: "App Store channel not found or incomplete: missing"
-      }
+      })
     });
   });
 
@@ -1249,7 +1236,7 @@ describe("CLI scaffold", () => {
     const stderr: string[] = [];
     const cli = createCli({ stdout: () => undefined, stderr: (chunk) => stderr.push(chunk) });
 
-    await expect(cli(["store", "review-plan", "--manifest", manifestPath])).resolves.toBe(64);
+    await expect(cli(["store", "review-plan", "--manifest", manifestPath])).resolves.toBe(2);
     expect(stderr.join("")).toBe("store review-plan requires --channel <id>\n");
   });
 
@@ -1257,7 +1244,7 @@ describe("CLI scaffold", () => {
     const stderr: string[] = [];
     const cli = createCli({ stdout: () => undefined, stderr: (chunk) => stderr.push(chunk) });
 
-    await expect(cli(["asc", "smoke", "--config", "/tmp/does-not-exist-adk.json"])).resolves.toBe(69);
+    await expect(cli(["asc", "smoke", "--config", "/tmp/does-not-exist-adk.json"])).resolves.toBe(5);
     expect(stderr.join("")).toContain("no such file or directory");
   });
 
@@ -1332,17 +1319,15 @@ describe("CLI scaffold", () => {
     expect(stdout.join("")).toBe("{\n  \"data\": []\n}\n");
 
     stdout.splice(0);
-    await expect(cli(["--json", "asc", "get"])).resolves.toBe(64);
+    await expect(cli(["--json", "asc", "get"])).resolves.toBe(2);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: { code: "missing_path", message: "asc get requires --path <path>" }
+      error: expect.objectContaining({ code: "missing_path", message: "asc get requires --path <path>" })
     });
 
     stdout.splice(0);
-    await expect(cli(["--json", "asc", "get", "--path", "/v1/apps", "--query", "bad"])).resolves.toBe(69);
+    await expect(cli(["--json", "asc", "get", "--path", "/v1/apps", "--query", "bad"])).resolves.toBe(5);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: { code: "asc_get_failed", message: "Expected --query value to be name=id, got: bad" }
+      error: expect.objectContaining({ code: "asc_get_failed", message: "Expected --query value to be name=id, got: bad" })
     });
   });
 
@@ -1402,11 +1387,10 @@ describe("CLI scaffold", () => {
         "--build-id",
         "build-123"
       ])
-    ).resolves.toBe(65);
+    ).resolves.toBe(3);
     expect(calls).toEqual([]);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      ok: false,
-      error: {
+      error: expect.objectContaining({
         code: "testflight_publish_blocked",
         message: "testflight publish blocked: testflight-whats-new-required",
         details: {
@@ -1418,7 +1402,7 @@ describe("CLI scaffold", () => {
             }
           ]
         }
-      }
+      })
     });
   });
 

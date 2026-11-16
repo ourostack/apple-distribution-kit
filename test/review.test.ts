@@ -213,12 +213,12 @@ describe("review status command", () => {
     const { cli, stdout } = cliWith(async () => {
       throw new Error("HTTP 401");
     });
-    await expect(cli(["--json", "review", "status"])).resolves.toBe(64);
+    await expect(cli(["--json", "review", "status"])).resolves.toBe(2);
     expect(JSON.parse(stdout.splice(0).join("")).error.code).toBe("missing_bundle_id");
-    await expect(cli(["--json", "review", "status", "--bundle-id", "a", "--platform", "TV_OS"])).resolves.toBe(64);
+    await expect(cli(["--json", "review", "status", "--bundle-id", "a", "--platform", "TV_OS"])).resolves.toBe(2);
     expect(JSON.parse(stdout.splice(0).join("")).error.code).toBe("invalid_platform");
-    await expect(cli(["--json", "review", "status", "--bundle-id", "a"])).resolves.toBe(69);
-    expect(JSON.parse(stdout.splice(0).join("")).error).toEqual({ code: "review_status_failed", message: "HTTP 401" });
+    await expect(cli(["--json", "review", "status", "--bundle-id", "a"])).resolves.toBe(5);
+    expect(JSON.parse(stdout.splice(0).join("")).error).toMatchObject({ code: "review_status_failed", message: "HTTP 401" });
   });
 
   it("reads status through the default App Store Connect client", async () => {
@@ -251,6 +251,7 @@ describe("review status command", () => {
   it("uses the built-in reader when no dependency is given", async () => {
     const stdout: string[] = [];
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
-    await expect(cli(["--json", "review", "status"])).resolves.toBe(64);
+    await expect(cli(["--json", "review", "status"])).resolves.toBe(2);
+    expect(JSON.parse(stdout.join("")).error.exit).toBe(2);
   });
 });

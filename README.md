@@ -51,6 +51,19 @@ apple-distribution-kit review login-services --root .   # Guideline 4.8 check be
 
 A channel's `distribution` is `developer-id` (a signed, notarized Mac download), `app-store` (Mac App Store review) or `testflight` (iOS beta).
 
+## Exit codes
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 0 | `ok` | Success. |
+| 1 | `error` | An error; the message says what to do. |
+| 2 | `usage` | A missing or wrong argument; nothing was done. |
+| 3 | `invalid` | The manifest or a value is invalid; the message says what to fix. |
+| 4 | `no-input` | A file or login the command needs is missing or failed. |
+| 5 | `unavailable` | Apple or a local tool did not answer; retry later. |
+
+The full table and the `--json` error shape are in the [manual](docs/manual.md#exit-codes). Version 0.2.0 changed the codes from sysexits (64, 65, 66, 69).
+
 ## The manual
 
 [docs/manual.md](docs/manual.md) has the rest:

@@ -11,6 +11,7 @@ import { redactSecrets } from "./redaction.js";
 import { checkLoginServices, collectLoginServiceSources } from "./login-services.js";
 import { signingCommand, signingUsage, type SigningCliDependencies } from "./signing-cli.js";
 import { developerCommand, developerUsage, type DeveloperCliDependencies } from "./developer-cli.js";
+import { EXIT } from "./exit-codes.js";
 import { buildTestFlightRequests, planTestFlightSubmission, publishTestFlightRequests } from "./testflight.js";
 import {
   buildXcodeCommand,
@@ -141,7 +142,7 @@ export function createCli(io: CliIo, dependencies: CliDependencies = {}): Cli {
       });
     }
 
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "unknown_command",
       message: `Unknown command: ${command}`
     });
@@ -164,7 +165,7 @@ async function ascSmokeCommand(
     }
     return 0;
   } catch (error) {
-    return fail(io, json, 69, {
+    return fail(io, json, EXIT.unavailable, {
       code: "asc_smoke_failed",
       message: (error as Error).message
     });
@@ -179,11 +180,11 @@ async function reviewStatusCommand(
 ): Promise<number> {
   const bundleId = optionValue(args, "--bundle-id");
   if (!bundleId) {
-    return fail(io, json, 64, { code: "missing_bundle_id", message: "review status requires --bundle-id <id>" });
+    return fail(io, json, EXIT.usage, { code: "missing_bundle_id", message: "review status requires --bundle-id <id>" });
   }
   const platform = optionValue(args, "--platform");
   if (platform !== undefined && !REVIEW_PLATFORMS.includes(platform as ReviewPlatform)) {
-    return fail(io, json, 64, { code: "invalid_platform", message: `Unknown platform: ${platform}` });
+    return fail(io, json, EXIT.usage, { code: "invalid_platform", message: `Unknown platform: ${platform}` });
   }
   try {
     const status = await readStatus({
@@ -204,20 +205,20 @@ async function reviewStatusCommand(
     }
     return 0;
   } catch (error) {
-    return fail(io, json, 69, { code: "review_status_failed", message: (error as Error).message });
+    return fail(io, json, EXIT.unavailable, { code: "review_status_failed", message: (error as Error).message });
   }
 }
 
 async function reviewLoginServicesCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
   if (args.includes("--root") && !optionValue(args, "--root")) {
-    return fail(io, json, 64, { code: "missing_root", message: "review login-services --root needs a directory" });
+    return fail(io, json, EXIT.usage, { code: "missing_root", message: "review login-services --root needs a directory" });
   }
   const root = optionValue(args, "--root") ?? process.cwd();
   let report;
   try {
     report = checkLoginServices(await collectLoginServiceSources(root));
   } catch (error) {
-    return fail(io, json, 66, { code: "login_services_failed", message: (error as Error).message });
+    return fail(io, json, EXIT.noInput, { code: "login_services_failed", message: (error as Error).message });
   }
   const passed = report.findings.length === 0;
   if (json) {
@@ -250,7 +251,7 @@ async function ascGetCommand(
 ): Promise<number> {
   const path = optionValue(args, "--path");
   if (!path) {
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "missing_path",
       message: "asc get requires --path <path>"
     });
@@ -268,7 +269,7 @@ async function ascGetCommand(
     }
     return 0;
   } catch (error) {
-    return fail(io, json, 69, {
+    return fail(io, json, EXIT.unavailable, {
       code: "asc_get_failed",
       message: (error as Error).message
     });
@@ -278,7 +279,7 @@ async function ascGetCommand(
 async function planCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
   const modeValue = optionValue(args, "--mode") ?? "dry-run";
   if (!isPlanMode(modeValue)) {
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "invalid_mode",
       message: `Unknown plan mode: ${modeValue}`
     });
@@ -297,7 +298,7 @@ async function planCommand(io: CliIo, json: boolean, args: string[]): Promise<nu
     }
     return 0;
   } catch (error) {
-    return fail(io, json, 65, {
+    return fail(io, json, EXIT.invalid, {
       code: "plan_failed",
       message: (error as Error).message
     });
@@ -307,7 +308,7 @@ async function planCommand(io: CliIo, json: boolean, args: string[]): Promise<nu
 async function storeReviewPlanCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
   const channelId = optionValue(args, "--channel");
   if (!channelId) {
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "missing_channel",
       message: "store review-plan requires --channel <id>"
     });
@@ -332,7 +333,7 @@ async function storeReviewPlanCommand(io: CliIo, json: boolean, args: string[]):
     }
     return 0;
   } catch (error) {
-    return fail(io, json, 65, {
+    return fail(io, json, EXIT.invalid, {
       code: "store_review_plan_failed",
       message: (error as Error).message
     });
@@ -342,7 +343,7 @@ async function storeReviewPlanCommand(io: CliIo, json: boolean, args: string[]):
 async function testFlightPlanCommand(io: CliIo, json: boolean, args: string[]): Promise<number> {
   const channelId = optionValue(args, "--channel");
   if (!channelId) {
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "missing_channel",
       message: "testflight plan requires --channel <id>"
     });
@@ -367,7 +368,7 @@ async function testFlightPlanCommand(io: CliIo, json: boolean, args: string[]): 
     }
     return 0;
   } catch (error) {
-    return fail(io, json, 65, {
+    return fail(io, json, EXIT.invalid, {
       code: "testflight_plan_failed",
       message: (error as Error).message
     });
@@ -382,7 +383,7 @@ async function testFlightPublishCommand(
 ): Promise<number> {
   const modeValue = optionValue(args, "--mode") ?? "dry-run";
   if (!isRunMode(modeValue)) {
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "invalid_mode",
       message: `Unknown TestFlight publish mode: ${modeValue}`
     });
@@ -391,7 +392,7 @@ async function testFlightPublishCommand(
   const appId = optionValue(args, "--app-id");
   const buildId = optionValue(args, "--build-id");
   if (!channelId || !appId || !buildId) {
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "missing_testflight_publish_input",
       message: "testflight publish requires --channel, --app-id, and --build-id"
     });
@@ -402,7 +403,7 @@ async function testFlightPublishCommand(
     const manifest = await loadManifest(manifestPath);
     const plan = planTestFlightSubmission({ manifest, channelId });
     if (plan.blockers.length > 0) {
-      return fail(io, json, 65, {
+      return fail(io, json, EXIT.invalid, {
         code: "testflight_publish_blocked",
         message: `testflight publish blocked: ${plan.blockers.map((blocker) => blocker.code).join(", ")}`,
         details: { blockers: plan.blockers }
@@ -448,7 +449,7 @@ async function testFlightPublishCommand(
     }
     return 0;
   } catch (error) {
-    return fail(io, json, 65, {
+    return fail(io, json, EXIT.invalid, {
       code: "testflight_publish_failed",
       message: (error as Error).message
     });
@@ -463,7 +464,7 @@ async function xcodeRunCommand(
 ): Promise<number> {
   const modeValue = optionValue(args, "--mode") ?? "dry-run";
   if (!isRunMode(modeValue)) {
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "invalid_mode",
       message: `Unknown xcode run mode: ${modeValue}`
     });
@@ -471,7 +472,7 @@ async function xcodeRunCommand(
 
   const kindValue = optionValue(args, "--kind");
   if (!kindValue || !isXcodeCommandKind(kindValue)) {
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "invalid_kind",
       message: "xcode run requires --kind codesign|productbuild|notary-submit|stapler|stapler-validate|spctl|altool-validate|altool-upload"
     });
@@ -479,7 +480,7 @@ async function xcodeRunCommand(
 
   const commandInput = xcodeCommandInput(kindValue, args);
   if ("error" in commandInput) {
-    return fail(io, json, 64, {
+    return fail(io, json, EXIT.usage, {
       code: "missing_option",
       message: commandInput.error
     });
@@ -500,7 +501,7 @@ async function xcodeRunCommand(
     }
     return result.ok ? 0 : result.exitCode;
   } catch (error) {
-    return fail(io, json, 69, {
+    return fail(io, json, EXIT.unavailable, {
       code: "xcode_run_failed",
       message: (error as Error).message
     });
@@ -552,7 +553,7 @@ async function validateManifestCommand(io: CliIo, json: boolean, args: string[])
     }
     return 0;
   } catch (error) {
-    return fail(io, json, 65, {
+    return fail(io, json, EXIT.invalid, {
       code: "manifest_invalid",
       message: (error as Error).message
     });
@@ -625,7 +626,7 @@ function takeFlag(args: string[], flag: string): boolean {
 
 function fail(io: CliIo, json: boolean, exitCode: number, error: CliError): number {
   if (json) {
-    io.stdout(`${JSON.stringify({ ok: false, error }, null, 2)}\n`);
+    io.stdout(`${JSON.stringify({ error: { code: error.code, exit: exitCode, thing: "apple-distribution-kit", problem: error.message, fix: null, message: error.message, ...(error.details === undefined ? {} : { details: error.details }) } }, null, 2)}\n`);
   } else {
     io.stderr(`${error.message}\n`);
   }

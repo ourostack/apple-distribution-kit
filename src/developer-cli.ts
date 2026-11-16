@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createDeveloperClient } from "./developer.js";
 import { assertDeveloperPlatform, DeveloperError, importDeveloperSession, loadDeveloperSession, readDeveloperPrivateInput, validateDeveloperId } from "./developer-session.js";
 import type { CliIo } from "./cli-core.js";
+import { EXIT } from "./exit-codes.js";
 import { planDeveloperKey, applyDeveloperKey, reconcileDeveloperKey, type DeveloperKeyPlanOptions } from "./developer-keys.js";
 import { getDeveloperService, planDeveloperService, applyDeveloperService, reconcileDeveloperService,
   type DeveloperServiceConfiguration } from "./developer-services.js";
@@ -126,12 +127,13 @@ export async function developerCommand(io: CliIo, args: string[], dependencies: 
     }
     const uncertain = typeof result === "object" && result !== null && "state" in result && result.state === "uncertain";
     io.stdout(`${JSON.stringify(json ? { ok: !uncertain, result } : result, null, 2)}\n`);
-    return uncertain ? 69 : 0;
+    return uncertain ? EXIT.unavailable : EXIT.ok;
   } catch (error) {
     const safe = error instanceof DeveloperError ? error : new DeveloperError("invalid_session");
     const envelope = { code: safe.code, message: safe.message, ...(safe.requiresHuman ? { requiresHuman: safe.requiresHuman } : {}) };
-    if (json) io.stdout(`${JSON.stringify({ ok: false, error: envelope }, null, 2)}\n`);
+    const exit = safe.code === "invalid_arguments" ? EXIT.usage : EXIT.unavailable;
+    if (json) io.stdout(`${JSON.stringify({ error: { code: safe.code, exit, thing: "apple-distribution-kit developer", problem: safe.message, fix: null, message: safe.message, ...(safe.requiresHuman ? { requiresHuman: safe.requiresHuman } : {}) } }, null, 2)}\n`);
     else io.stderr(`${JSON.stringify(envelope)}\n`);
-    return safe.code === "invalid_arguments" ? 64 : 69;
+    return exit;
   }
 }

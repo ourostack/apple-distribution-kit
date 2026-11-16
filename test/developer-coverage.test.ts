@@ -275,7 +275,7 @@ it.each([
 ].map(args => ({ args })))("rejects invalid complete developer argv %#", async ({ args }) => {
   let output = "";
   expect(await developerCommand({ stdout: v => { output += v; }, stderr: v => { output += v; } },
-    [...args, "--team-id", teamId, "--session-file", file("unused.json"), "--json"])).toBe(64);
+    [...args, "--team-id", teamId, "--session-file", file("unused.json"), "--json"])).toBe(2);
   expect(JSON.parse(output).error.code).toBe("invalid_arguments");
 });
 it("enrolls from real local descriptor input via the default stdin adapter and refuses oversized stdin", async () => {
@@ -295,7 +295,7 @@ it("enrolls from real local descriptor input via the default stdin adapter and r
     expect(kit.loadDeveloperSession({ teamId, sessionFile: destination }).cookieHeader("account/auth/key/list")).toContain("session=");
   } finally { fs.closeSync(fd); }
   expect(await developerCommand({ stdout() {}, stderr() {} }, ["developer", "session", "import", "--team-id", teamId,
-    "--session-file", file("oversized.json")], { readStdin: () => "x".repeat(1024 * 1024 + 1) })).toBe(69);
+    "--session-file", file("oversized.json")], { readStdin: () => "x".repeat(1024 * 1024 + 1) })).toBe(5);
 });
 it("uses default injected-global transport for CLI status and each lifecycle planning action", async () => {
   for (const action of ["create", "revoke", "download"] as const) {
@@ -313,11 +313,11 @@ it("uses default injected-global transport for CLI status and each lifecycle pla
 });
 it("sanitizes an unexpected CLI host-I/O exception", async () => {
   const io = { stdout: vi.fn(), stderr: vi.fn() };
-  expect(await developerCommand(io, ["developer", "status", "--team-id", teamId, "--session-file", file("missing.json"), "--json"])).toBe(69);
+  expect(await developerCommand(io, ["developer", "status", "--team-id", teamId, "--session-file", file("missing.json"), "--json"])).toBe(5);
   const s = fixture();
   io.stdout.mockImplementationOnce(() => { throw Error(secret); });
   expect(await developerCommand(io, ["developer", "status", "--team-id", teamId, "--session-file", s.scope.sessionFile, "--json"],
-    { fetch: s.scope.fetch })).toBe(69);
+    { fetch: s.scope.fetch })).toBe(5);
   expect(JSON.stringify(io.stdout.mock.calls.at(-1))).not.toContain(secret);
 });
 
@@ -485,12 +485,12 @@ it("does not remove a foreign replacement at its staging pathname", () => {
 });
 it("reports missing developer commands and incomplete action options without transport", async () => {
   const io = { stdout() {}, stderr() {} };
-  expect(await developerCommand(io, [])).toBe(64);
-  expect(await developerCommand(io, ["developer", "keys"])).toBe(64);
+  expect(await developerCommand(io, [])).toBe(2);
+  expect(await developerCommand(io, ["developer", "keys"])).toBe(2);
   const s = fixture("download");
   expect(await developerCommand(io, ["developer", "keys", "plan", "--action", "download", "--key-id", s.key.keyId,
     "--team-id", teamId, "--environment", "test", "--primary-app-id", primaryAppId, "--primary-app-identifier", identifier,
-    "--session-file", s.scope.sessionFile, "--plan-file", s.scope.planFile])).toBe(64);
+    "--session-file", s.scope.sessionFile, "--plan-file", s.scope.planFile])).toBe(2);
 });
 it("lists only allowlisted inspection metadata through the actual CLI route", async () => {
   const s = fixture("revoke");
