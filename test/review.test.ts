@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AppStoreConnectClient } from "../src/asc.js";
-import { createCli } from "../src/cli-core.js";
+import { createCli } from "./why-shim.ts";
 import {
   readReviewMessages,
   readReviewStatus,
@@ -214,7 +214,7 @@ describe("review status command", () => {
       throw new Error("HTTP 401");
     });
     await expect(cli(["--json", "review", "status"])).resolves.toBe(2);
-    expect(JSON.parse(stdout.splice(0).join("")).error.code).toBe("missing_bundle_id");
+    expect(JSON.parse(stdout.splice(0).join("")).error.code).toBe("missing-flag");
     await expect(cli(["--json", "review", "status", "--bundle-id", "a", "--platform", "TV_OS"])).resolves.toBe(2);
     expect(JSON.parse(stdout.splice(0).join("")).error.code).toBe("invalid_platform");
     await expect(cli(["--json", "review", "status", "--bundle-id", "a"])).resolves.toBe(5);

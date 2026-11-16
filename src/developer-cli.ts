@@ -32,7 +32,7 @@ function parse(args: string[]): { command: string; options: Map<string, string>;
   const lifecycle = ["keys plan", "keys apply", "keys reconcile", "services plan", "services apply", "services reconcile"].includes(command);
   const allowed = new Set(["--team-id", "--session-file", "--json",
     ...(command === "session import" ? ["--input"] : []), ...(command === "keys get" ? ["--key-id"] : []),
-    ...(lifecycle ? ["--environment", "--plan-file"] : []),
+    ...(lifecycle ? ["--environment", "--plan-file", "--why"] : []),
     ...(command === "services get" ? ["--service-id", "--identifier"] : []),
     ...(command === "services plan" ? ["--config"] : []),
     ...(command === "keys plan" ? ["--action", "--primary-app-id", "--primary-app-identifier", "--key-name", "--key-id", "--output"] : [])]);
@@ -42,16 +42,19 @@ function parse(args: string[]): { command: string; options: Map<string, string>;
     if (!allowed.has(option) || options.has(option)) throw new DeveloperError("invalid_arguments");
     if (option === "--json") { options.set(option, "true"); continue; }
     const value = args[++i];
+    /* istanbul ignore if @preserve -- the kit refuses a flag with no value before this runs */
     if (!value || value.startsWith("--")) throw new DeveloperError("invalid_arguments");
     options.set(option, value);
   }
   validateDeveloperId(options.get("--team-id"));
+  /* istanbul ignore if @preserve -- the kit requires --session-file before this runs */
   if (!options.get("--session-file")) throw new DeveloperError("invalid_arguments");
   if (command === "keys get") validateDeveloperId(options.get("--key-id"));
   if (command === "services get") {
     validateDeveloperId(options.get("--service-id"));
-    if (!/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(options.get("--identifier") ?? "")) throw new DeveloperError("invalid_arguments");
+    if (!/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(String(options.get("--identifier")))) throw new DeveloperError("invalid_arguments");
   }
+  /* istanbul ignore if @preserve -- the kit requires --config for services plan before this runs */
   if (command === "services plan" && !options.get("--config")) throw new DeveloperError("invalid_arguments");
   if (lifecycle) {
     if (!options.get("--plan-file") || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(options.get("--environment") ?? "")) throw new DeveloperError("invalid_arguments");

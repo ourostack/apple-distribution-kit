@@ -28,4 +28,22 @@ describe("the command table", () => {
     await expect(cli(["help", "no-such-command"])).resolves.toBe(2);
     expect(stderr.join("")).toMatch(/no help for "no-such-command"/);
   });
+
+  it("refuses a wrong team id on a developer command other people see, before anything runs, and says where to get one", async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: (chunk) => stderr.push(chunk) });
+    const argv = ["developer", "keys", "apply", "--team-id", "axxraynoref", "--environment", "test", "--session-file", "s.json", "--plan-file", "p.json", "--why", "Riley asked"];
+    await expect(cli(argv)).resolves.toBe(2);
+    expect(stderr.join("")).toMatch(/--team-id "axxraynoref" is not a 10-character team id. Fix: take the right value from/);
+    await expect(cli([...argv, "--json"])).resolves.toBe(2);
+    expect(JSON.parse(stdout.join("")).error.code).toBe("bad-reference");
+  });
+
+  it("previews a command other people see with --dry-run, and sends nothing", async () => {
+    const stdout: string[] = [];
+    const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: () => undefined });
+    await expect(cli(["testflight", "publish", "--channel", "c", "--app-id", "a", "--build-id", "b", "--dry-run", "--why", "Riley asked"])).resolves.toBe(0);
+    expect(stdout.join("")).toMatch(/Would send the TestFlight requests.*would see it\. Nothing is sent in a preview\./);
+  });
 });
