@@ -3,7 +3,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import * as kit from "../src/index.js";
-import { createCli } from "../src/cli-core.js";
+import { createCli } from "./why-shim.ts";
 import { createDeveloperTransport } from "../src/developer-transport.js";
 import { developerTransportUrl } from "../src/developer-session.js";
 import { canonical, digest } from "../src/developer-private-operations.js";

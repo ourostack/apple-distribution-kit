@@ -1,10 +1,17 @@
 # Changelog
 
+- Every command passes the kit's parse first, so an unknown flag, a missing argument or a bad value is refused with the kit's error (exit 2 usage, or 3 invalid), before any work runs.
+- **Breaking for commands other people see:** `--why "<who asked you, and what they said>"` is now required on `testflight publish`, `xcode run`, `signing create-certificate`, `signing profiles`, `signing revoke-api-certificates`, and `developer keys apply|reconcile` and `developer services apply|reconcile`. This applies to `--mode dry-run` too. A caller that passed none must add it.
+- `--dry-run` on a command other people see previews what it would do and who would see it, and sends nothing. `signing revoke-api-certificates` keeps its own `--dry-run`.
+- A malformed `--team-id`, `--key-id` or identifier on a `developer` command other people see is refused before anything runs, and the error says where to get a right one.
+- The command table declares every command's flags. A flag it does not declare is refused.
+- The kit's validation errors echo the value they refuse, so a typed value appears in the error line. Do not pass a secret as a flag value.
+
 ## Unreleased
 
 - The command list and `--help` come from one command table (`src/command-table.ts`), rendered by the vendored Ouro AX kit (`src/ouro-ax/`). `--help --json` is machine-readable and lists every command with its effect.
 - `APPLE_DISTRIBUTION_ASC_BASE_URL` points App Store Connect calls at a mock. It is refused unless the host is 127.0.0.1 or ::1.
-- The Ouro AX X-ray and the action-claims check run in CI (`.github/workflows/ax.yml`). The X-ray step does not yet block, because not every command family runs through the kit.
+- The Ouro AX X-ray and the action-claims check run in CI (`.github/workflows/ax.yml`), and the X-ray gates the build: every must claim holds against the made-up mock.
 
 ## 0.2.0
 

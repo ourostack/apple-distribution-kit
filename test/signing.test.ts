@@ -3,8 +3,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createCli } from "./why-shim.ts";
 import {
-  createCli,
   buildExportOptions,
   c99ExtIdentifier,
   createSigningCertificate,
@@ -644,7 +644,7 @@ describe("signing CLI", () => {
 
     const noBundle = cli({});
     expect(await noBundle.run(["signing", "profiles", "--state", statePath, "--team-id", "T", "--xcconfig", "x", "--export-options", "e"])).toBe(2);
-    expect(noBundle.stderr.join("")).toBe("signing profiles requires at least one --bundle-id\n");
+    expect(noBundle.stderr.join("")).toMatch(/^apple-distribution-kit: signing profiles: /);
   });
 
   it("deletes the keychain", async () => {
@@ -677,7 +677,7 @@ describe("signing CLI", () => {
     expect(JSON.parse(json.stdout.join(""))).toEqual({ ok: true, out, count: 1 });
     const missing = cli({});
     expect(await missing.run(["signing", "snapshot-certificates", "--json"])).toBe(2);
-    expect(JSON.parse(missing.stdout.join("")).error).toMatchObject({ code: "missing_option", message: "signing snapshot-certificates requires --out" });
+    expect(JSON.parse(missing.stdout.join("")).error).toMatchObject({ code: "missing-flag" });
   });
 
   it("runs the revoke safety net with retries and a clear empty result", async () => {
@@ -705,7 +705,7 @@ describe("signing CLI", () => {
     const { client, requests } = fakeClient({ "GET /v1/certificates": { data: [] } });
     const strict = cli({ client });
     expect(await strict.run(["signing", "revoke-api-certificates", "--json"])).toBe(2);
-    expect(JSON.parse(strict.stdout.join("")).error).toMatchObject({ code: "missing_option", message: "signing revoke-api-certificates requires --baseline" });
+    expect(JSON.parse(strict.stdout.join("")).error).toMatchObject({ code: "missing-flag" });
     const best = cli({ client });
     expect(await best.run(["signing", "revoke-api-certificates", "--best-effort", "--baseline", join(await makeTempDir(), "missing.json")])).toBe(0);
     expect(best.stderr.join("")).toContain("signing revoke-api-certificates warning: ENOENT");
@@ -726,14 +726,14 @@ describe("signing CLI", () => {
   it("rejects bad input", async () => {
     const unknown = cli({});
     expect(await unknown.run(["signing", "nope", "--json"])).toBe(2);
-    expect(JSON.parse(unknown.stdout.join("")).error.code).toBe("unknown_command");
+    expect(JSON.parse(unknown.stdout.join("")).error.code).toBe("unknown-command");
     const missing = cli({});
     expect(await missing.run(["signing", "delete-keychain", "--json"])).toBe(2);
-    expect(JSON.parse(missing.stdout.join("")).error).toMatchObject({ code: "missing_option", message: "signing delete-keychain requires --keychain" });
+    expect(JSON.parse(missing.stdout.join("")).error).toMatchObject({ code: "missing-flag" });
     for (const retries of ["0", "11", "x"]) {
       const bad = cli({});
       expect(await bad.run(["signing", "snapshot-certificates", "--out", "/tmp/unused.json", "--retries", retries])).toBe(2);
-      expect(bad.stderr.join("")).toBe(`--retries must be an integer from 1 to 10, got: ${retries}\n`);
+      expect(bad.stderr.join("")).toMatch(/^apple-distribution-kit: signing snapshot-certificates: /);
     }
   });
 

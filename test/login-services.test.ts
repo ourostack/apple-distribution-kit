@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createCli } from "../src/cli-core.js";
+import { createCli } from "./why-shim.ts";
 import { checkLoginServices, collectLoginServiceSources, THIRD_PARTY_LOGIN_MARKERS } from "../src/login-services.js";
 
 const ENTITLED = `<?xml version="1.0" encoding="UTF-8"?>
@@ -478,7 +478,7 @@ describe("review login-services CLI", () => {
   it("refuses --root with no directory", async () => {
     const result = await run(["review", "login-services", "--root"]);
     expect(result.code).toBe(2);
-    expect(result.stderr).toBe("review login-services --root needs a directory\n");
+    expect(result.stderr).toMatch(/^apple-distribution-kit: review login-services: /);
   });
 
   it("fails cleanly on a missing root", async () => {

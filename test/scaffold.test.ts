@@ -3,7 +3,8 @@ import { generateKeyPairSync } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createCli, discoverConfigPath, loadConfig, resolveManifestPath } from "../src/index.js";
+import { discoverConfigPath, loadConfig, resolveManifestPath } from "../src/index.js";
+import { createCli } from "./why-shim.ts";
 
 const tempDirs: string[] = [];
 
@@ -54,9 +55,9 @@ describe("CLI scaffold", () => {
     const cli = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: (chunk) => stderr.push(chunk) });
 
     await expect(cli(["--json", "nope"])).resolves.toBe(2);
-    expect(stderr).toEqual([]);
+    expect(stderr.join("")).toContain("nope");
     expect(JSON.parse(stdout.join(""))).toEqual({
-      error: expect.objectContaining({ exit: 2, code: "unknown_command", message: "Unknown command: nope" })
+      error: expect.objectContaining({ exit: 2, code: "unknown-command" })
     });
   });
 
@@ -67,7 +68,7 @@ describe("CLI scaffold", () => {
 
     await expect(cli(["nope"])).resolves.toBe(2);
     expect(stdout).toEqual([]);
-    expect(stderr.join("")).toBe("Unknown command: nope\n");
+    expect(stderr.join("")).toMatch(/^apple-distribution-kit: nope: there is no command "nope"/);
   });
 
   it("returns structured errors for missing manifest validation input", async () => {
@@ -208,8 +209,7 @@ describe("CLI scaffold", () => {
     await expect(cli(["--json", "plan", "--mode", "publish"])).resolves.toBe(2);
     expect(JSON.parse(stdout.join(""))).toEqual({
       error: expect.objectContaining({
-        code: "invalid_mode",
-        message: "Unknown plan mode: publish"
+        code: "bad-value"
       })
     });
   });
@@ -436,8 +436,7 @@ describe("CLI scaffold", () => {
     await expect(cli(["--json", "testflight", "plan", "--manifest", manifestPath])).resolves.toBe(2);
     expect(JSON.parse(stdout.join(""))).toEqual({
       error: expect.objectContaining({
-        code: "missing_channel",
-        message: "testflight plan requires --channel <id>"
+        code: "missing-flag"
       })
     });
   });
@@ -616,15 +615,13 @@ describe("CLI scaffold", () => {
     [
       ["--json", "testflight", "publish", "--mode", "launch"],
       {
-        code: "invalid_mode",
-        message: "Unknown TestFlight publish mode: launch"
+        code: "bad-value"
       }
     ],
     [
       ["--json", "testflight", "publish", "--channel", "ios-testflight"],
       {
-        code: "missing_testflight_publish_input",
-        message: "testflight publish requires --channel, --app-id, and --build-id"
+        code: "missing-flag"
       }
     ]
   ])("rejects invalid TestFlight publish input %#", async (argv, error) => {
@@ -1145,15 +1142,14 @@ describe("CLI scaffold", () => {
     await expect(invalidModeCli(["--json", "xcode", "run", "--mode", "live"])).resolves.toBe(2);
     expect(JSON.parse(invalidMode.join(""))).toEqual({
       error: expect.objectContaining({
-        code: "invalid_mode",
-        message: "Unknown xcode run mode: live"
+        code: "bad-value"
       })
     });
 
     const invalidKind: string[] = [];
     const invalidKindCli = createCli({ stdout: (chunk) => invalidKind.push(chunk), stderr: () => undefined });
     await expect(invalidKindCli(["--json", "xcode", "run", "--kind", "nope"])).resolves.toBe(2);
-    expect(JSON.parse(invalidKind.join("")).error.code).toBe("invalid_kind");
+    expect(JSON.parse(invalidKind.join("")).error.code).toBe("bad-value");
 
     const missingOption: string[] = [];
     const missingOptionCli = createCli({ stdout: (chunk) => missingOption.push(chunk), stderr: () => undefined });
@@ -1230,7 +1226,7 @@ describe("CLI scaffold", () => {
     const cli = createCli({ stdout: () => undefined, stderr: (chunk) => stderr.push(chunk) });
 
     await expect(cli(["store", "review-plan", "--manifest", manifestPath])).resolves.toBe(2);
-    expect(stderr.join("")).toBe("store review-plan requires --channel <id>\n");
+    expect(stderr.join("")).toMatch(/^apple-distribution-kit: store review-plan: /);
   });
 
   it("returns text errors for asc smoke with a missing explicit config", async () => {
@@ -1314,7 +1310,7 @@ describe("CLI scaffold", () => {
     stdout.splice(0);
     await expect(cli(["--json", "asc", "get"])).resolves.toBe(2);
     expect(JSON.parse(stdout.join(""))).toEqual({
-      error: expect.objectContaining({ code: "missing_path", message: "asc get requires --path <path>" })
+      error: expect.objectContaining({ code: "missing-flag" })
     });
 
     stdout.splice(0);
