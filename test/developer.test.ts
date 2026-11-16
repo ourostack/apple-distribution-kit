@@ -209,7 +209,7 @@ describe("private Developer enrollment and refresh", () => {
       } satisfies CliDependencies);
       for (const input of [file, "-"]) {
         output = "";
-        expect(await cli(["developer", "session", "import", "--team-id", teamId, "--session-file", destination, "--input", input, "--json"])).toBe(69);
+        expect(await cli(["developer", "session", "import", "--team-id", teamId, "--session-file", destination, "--input", input, "--json"])).toBe(5);
         expect(JSON.parse(output).error.code).toBe("unsupported_platform");
       }
       expect(ioAttempted).toBe(false);
@@ -217,7 +217,7 @@ describe("private Developer enrollment and refresh", () => {
       syncBuiltinESMExports();
       output = "";
       expect(await cli(["--version"])).toBe(0);
-      expect(output).toContain("0.1.0");
+      expect(output).toContain("0.2.0");
     } finally {
       Object.defineProperty(process, "platform", platform);
       checks.forEach(check => check.mockRestore());
@@ -309,8 +309,8 @@ describe("private Developer enrollment and refresh", () => {
     expect(JSON.stringify(error)).not.toContain(secret);
     let output = "";
     const cli = kit.createCli({ stdout: v => { output += v; }, stderr: v => { output += v; } }, { developer: { fetch } });
-    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(69);
-    expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code: "invalid_session" } });
+    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(5);
+    expect(JSON.parse(output)).toMatchObject({ error: { code: "invalid_session" } });
     expect(output).not.toMatch(/requiresHuman|COOKIE_SECRET/);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -563,7 +563,7 @@ describe("Developer CLI", () => {
     const cli = kit.createCli({ stdout: chunk => { output += chunk; }, stderr: chunk => { output += chunk; } }, {
       developer: { fetch: async () => { calls++; return response({ resultCode: 2100, resultString: secret }); } }
     } satisfies CliDependencies);
-    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(69);
+    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(5);
     expect(JSON.parse(output).error.requiresHuman?.code).toBe("developer_agreement_required");
     expect(output).not.toContain(secret);
     expect(calls).toBe(1);
@@ -583,8 +583,8 @@ describe("Developer CLI", () => {
   ])("rejects malformed options without echoing input %#", async (...args) => {
     let output = "";
     const cli = kit.createCli({ stdout: x => { output += x; }, stderr: x => { output += x; } });
-    expect(await cli([...args, ...(args.includes("--json") ? [] : ["--json"])])).toBe(64);
-    expect(JSON.parse(output).ok).toBe(false);
+    expect(await cli([...args, ...(args.includes("--json") ? [] : ["--json"])])).toBe(2);
+    expect(JSON.parse(output).error.exit).toBe(2);
     expect(output).not.toContain(secret);
   });
 
@@ -604,7 +604,7 @@ describe("Developer CLI", () => {
     expect(output).not.toContain(secret);
     output = "";
     expect(await cli(["--version"])).toBe(0);
-    expect(output).toContain("0.1.0");
+    expect(output).toContain("0.2.0");
   });
 
   it("never echoes server, cookie or exception secrets at a human gate", async () => {
@@ -614,7 +614,7 @@ describe("Developer CLI", () => {
     const cli = kit.createCli({ stdout: x => { output += x; }, stderr: x => { output += x; } }, {
       developer: { fetch: async () => new Response(secret, { status: 401 }) }
     } satisfies CliDependencies);
-    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(69);
+    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(5);
     expect(JSON.parse(output).error.requiresHuman.type).toBe("requiresHuman");
     expect(output).not.toContain(secret);
   });
@@ -628,7 +628,7 @@ describe("Developer CLI", () => {
     const cli = kit.createCli({ stdout: chunk => { output += chunk; }, stderr: chunk => { output += chunk; } }, {
       developer: { fetch: async () => response({ resultCode: 0, keys: [] }, 200, { "set-cookie": `session=${secret}; Domain=.apple.com; Secure; Path=/` }) }
     } satisfies CliDependencies);
-    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(69);
+    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(5);
     expect(JSON.parse(output).error.code).toBe("session_store_busy");
     expect(output).not.toContain(secret);
     expect(readFileSync(lock, "utf8")).toBe(secret);
@@ -654,7 +654,7 @@ describe("Developer CLI", () => {
     expect(await cli(["--json", "developer", "status", "--team-id", teamId, "--session-file", file])).toBe(0);
     expect(JSON.parse(output).result.ready).toBe(true);
     output = "";
-    expect(await cli(["--json", "developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(64);
+    expect(await cli(["--json", "developer", "status", "--team-id", teamId, "--session-file", file, "--json"])).toBe(2);
     expect(JSON.parse(output).error.code).toBe("invalid_arguments");
   });
 
@@ -665,7 +665,7 @@ describe("Developer CLI", () => {
     const cli = kit.createCli({ stdout: x => { output += x; }, stderr: x => { output += x; } }, {
       developer: { fetch: async () => { throw new Error(`${secret} CSRF_SECRET_MUST_NOT_LEAK PRIVATE_KEY_VALUE`); } }
     } satisfies CliDependencies);
-    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, ...(json ? ["--json"] : [])])).toBe(69);
+    expect(await cli(["developer", "status", "--team-id", teamId, "--session-file", file, ...(json ? ["--json"] : [])])).toBe(5);
     expect(output).not.toMatch(/COOKIE_SECRET|CSRF_SECRET|PRIVATE_KEY_VALUE/);
   });
 });

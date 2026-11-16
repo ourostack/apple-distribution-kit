@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createAppStoreConnectClient, loadAscAuth, type AppStoreConnectClient, type RetryOptions } from "./asc.js";
 import { discoverConfigPath } from "./config.js";
+import { EXIT } from "./exit-codes.js";
 import {
   buildExportOptions,
   createSigningCertificate,
@@ -67,14 +68,14 @@ export async function signingCommand(
       case "revoke-api-certificates":
         return await revokeCommand(io, json, args, dependencies);
       default:
-        return fail(io, json, 64, "unknown_command", `Unknown signing command: ${subcommand}`);
+        return fail(io, json, EXIT.usage, "unknown_command", `Unknown signing command: ${subcommand}`);
     }
   } catch (error) {
     if (bestEffort) {
       io.stderr(`signing revoke-api-certificates warning: ${(error as Error).message}\n`);
       return 0;
     }
-    return fail(io, json, error instanceof UsageError ? 64 : 69, error instanceof UsageError ? "missing_option" : "signing_failed", (error as Error).message);
+    return fail(io, json, error instanceof UsageError ? EXIT.usage : EXIT.unavailable, error instanceof UsageError ? "missing_option" : "signing_failed", (error as Error).message);
   }
 }
 
@@ -253,7 +254,7 @@ function writeJson(path: string, value: unknown): void {
 
 function fail(io: SigningCliIo, json: boolean, exitCode: number, code: string, message: string): number {
   if (json) {
-    io.stdout(`${JSON.stringify({ ok: false, error: { code, message } }, null, 2)}\n`);
+    io.stdout(`${JSON.stringify({ error: { code, exit: exitCode, thing: "apple-distribution-kit", problem: message, fix: null, message } }, null, 2)}\n`);
   } else {
     io.stderr(`${message}\n`);
   }

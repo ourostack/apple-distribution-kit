@@ -600,7 +600,7 @@ describe("signing CLI", () => {
     expect(JSON.parse(json.stdout.join("")).state.keychainPath).toBe(join(dir, "k2"));
 
     const missing = cli({ env: { APPLE_DISTRIBUTION_CERTIFICATE_P12_BASE64: "x" } });
-    expect(await missing.run(["signing", "import", "--keychain", "k", "--state", "s"])).toBe(64);
+    expect(await missing.run(["signing", "import", "--keychain", "k", "--state", "s"])).toBe(2);
     expect(missing.stderr.join("")).toBe("Missing signing secret environment variable(s): APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD\n");
   });
 
@@ -643,7 +643,7 @@ describe("signing CLI", () => {
     expect(reused.stdout.join("")).toContain('profile reused: "ADK CI app.example CERT1"');
 
     const noBundle = cli({});
-    expect(await noBundle.run(["signing", "profiles", "--state", statePath, "--team-id", "T", "--xcconfig", "x", "--export-options", "e"])).toBe(64);
+    expect(await noBundle.run(["signing", "profiles", "--state", statePath, "--team-id", "T", "--xcconfig", "x", "--export-options", "e"])).toBe(2);
     expect(noBundle.stderr.join("")).toBe("signing profiles requires at least one --bundle-id\n");
   });
 
@@ -676,8 +676,8 @@ describe("signing CLI", () => {
     expect(await json.run(["signing", "snapshot-certificates", "--out", out, "--json"])).toBe(0);
     expect(JSON.parse(json.stdout.join(""))).toEqual({ ok: true, out, count: 1 });
     const missing = cli({});
-    expect(await missing.run(["signing", "snapshot-certificates", "--json"])).toBe(64);
-    expect(JSON.parse(missing.stdout.join("")).error).toEqual({ code: "missing_option", message: "signing snapshot-certificates requires --out" });
+    expect(await missing.run(["signing", "snapshot-certificates", "--json"])).toBe(2);
+    expect(JSON.parse(missing.stdout.join("")).error).toMatchObject({ code: "missing_option", message: "signing snapshot-certificates requires --out" });
   });
 
   it("runs the revoke safety net with retries and a clear empty result", async () => {
@@ -704,8 +704,8 @@ describe("signing CLI", () => {
   it("refuses to revoke without a baseline, and revokes nothing in best-effort mode", async () => {
     const { client, requests } = fakeClient({ "GET /v1/certificates": { data: [] } });
     const strict = cli({ client });
-    expect(await strict.run(["signing", "revoke-api-certificates", "--json"])).toBe(64);
-    expect(JSON.parse(strict.stdout.join("")).error).toEqual({ code: "missing_option", message: "signing revoke-api-certificates requires --baseline" });
+    expect(await strict.run(["signing", "revoke-api-certificates", "--json"])).toBe(2);
+    expect(JSON.parse(strict.stdout.join("")).error).toMatchObject({ code: "missing_option", message: "signing revoke-api-certificates requires --baseline" });
     const best = cli({ client });
     expect(await best.run(["signing", "revoke-api-certificates", "--best-effort", "--baseline", join(await makeTempDir(), "missing.json")])).toBe(0);
     expect(best.stderr.join("")).toContain("signing revoke-api-certificates warning: ENOENT");
@@ -719,20 +719,20 @@ describe("signing CLI", () => {
     expect(await best.run(["signing", "revoke-api-certificates", "--best-effort", "--baseline", baseline])).toBe(0);
     expect(best.stderr.join("")).toBe("signing revoke-api-certificates warning: HTTP 500\n");
     const strict = cli({ client: failing });
-    expect(await strict.run(["signing", "revoke-api-certificates", "--json", "--baseline", baseline])).toBe(69);
-    expect(JSON.parse(strict.stdout.join(""))).toEqual({ ok: false, error: { code: "signing_failed", message: "HTTP 500" } });
+    expect(await strict.run(["signing", "revoke-api-certificates", "--json", "--baseline", baseline])).toBe(5);
+    expect(JSON.parse(strict.stdout.join(""))).toEqual({ error: expect.objectContaining({ exit: 5, code: "signing_failed", message: "HTTP 500" }) });
   });
 
   it("rejects bad input", async () => {
     const unknown = cli({});
-    expect(await unknown.run(["signing", "nope", "--json"])).toBe(64);
+    expect(await unknown.run(["signing", "nope", "--json"])).toBe(2);
     expect(JSON.parse(unknown.stdout.join("")).error.code).toBe("unknown_command");
     const missing = cli({});
-    expect(await missing.run(["signing", "delete-keychain", "--json"])).toBe(64);
-    expect(JSON.parse(missing.stdout.join("")).error).toEqual({ code: "missing_option", message: "signing delete-keychain requires --keychain" });
+    expect(await missing.run(["signing", "delete-keychain", "--json"])).toBe(2);
+    expect(JSON.parse(missing.stdout.join("")).error).toMatchObject({ code: "missing_option", message: "signing delete-keychain requires --keychain" });
     for (const retries of ["0", "11", "x"]) {
       const bad = cli({});
-      expect(await bad.run(["signing", "snapshot-certificates", "--out", "/tmp/unused.json", "--retries", retries])).toBe(64);
+      expect(await bad.run(["signing", "snapshot-certificates", "--out", "/tmp/unused.json", "--retries", retries])).toBe(2);
       expect(bad.stderr.join("")).toBe(`--retries must be an integer from 1 to 10, got: ${retries}\n`);
     }
   });
@@ -742,13 +742,13 @@ describe("signing CLI", () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
     const run = createCli({ stdout: (chunk) => stdout.push(chunk), stderr: (chunk) => stderr.push(chunk) });
-    expect(await run(["signing", "snapshot-certificates", "--out", join(dir, "baseline.json"), "--config", join(dir, "missing.json")])).toBe(69);
+    expect(await run(["signing", "snapshot-certificates", "--out", join(dir, "baseline.json"), "--config", join(dir, "missing.json")])).toBe(5);
     expect(stderr.join("")).toContain("missing.json");
     const withExecutor = createCli(
       { stdout: (chunk) => stdout.push(chunk), stderr: (chunk) => stderr.push(chunk) },
       { executeXcodeCommand: async () => ({ exitCode: 1, stdout: "", stderr: "no keychain" }) }
     );
-    expect(await withExecutor(["signing", "delete-keychain", "--keychain", "/tmp/none"])).toBe(69);
+    expect(await withExecutor(["signing", "delete-keychain", "--keychain", "/tmp/none"])).toBe(5);
     expect(stderr.join("")).toContain("security delete-keychain exited 1: no keychain");
   });
 });

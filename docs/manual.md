@@ -2,6 +2,21 @@
 
 Everything the [README](../README.md) leaves out: the full manifest contract, each lane, App Review, CI signing and the Apple Developer commands.
 
+## Exit codes
+
+Every command exits with one of these codes. They are Ouro AX's base table (0, 1 and 2 mean the same in every Ouro AX tool), then this tool's own, numbered from 3.
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 0 | `ok` | Success. |
+| 1 | `error` | An error; the message says what to do. |
+| 2 | `usage` | A missing or wrong argument; nothing was done. |
+| 3 | `invalid` | The manifest or a value is invalid; the message says what to fix. |
+| 4 | `no-input` | A file or login the command needs is missing or failed. |
+| 5 | `unavailable` | Apple or a local tool did not answer; retry later. |
+
+Version 0.2.0 changed the codes from sysexits (64 usage, 65 invalid, 66 no-input, 69 unavailable). A caller that only tests for a non-zero exit is unaffected. A `--json` error is `{ "error": { "code", "exit", "thing", "problem", "fix", "message" } }`, with no `ok` field. Results that report a state, such as an uncertain developer result, keep their `ok` field.
+
 ## Manifest Contract
 
 Apps declare distribution intent in `distribution/apple-distribution.json`.
@@ -440,7 +455,7 @@ Eligible secure `Set-Cookie` updates on validated successful responses are
 atomically persisted in the private store. A detected change to the loaded store
 is not overwritten. Refresh acquires an exclusive owner-only
 `<session-file>.refresh.lock` before re-reading, comparing or replacing the store.
-Contention returns sanitized `session_store_busy` (CLI exit 69), without changing
+Contention returns sanitized `session_store_busy` (CLI exit 5), without changing
 the store or removing another command's lock. Successful and failed refreshes
 release only the exact acquired lock, verified by its open descriptor's identity.
 Existing locks, including stale locks left by an interrupted process, are never
@@ -471,8 +486,8 @@ try {
 ```
 
 JSON CLI success uses `{ ok: true, result }`; errors use
-`{ ok: false, error: { code, message, requiresHuman? } }`. Invalid arguments exit
-64, and failed inspection or a human gate exits 69. Import reports only enrollment,
+`{ error: { code, exit, thing, problem, fix, message, requiresHuman? } }`. Invalid arguments exit
+2, and failed inspection or a human gate exits 5. Import reports only enrollment,
 not live readiness. Neither library nor CLI returns arbitrary portal JSON.
 
 ## SIWA plan / apply / reconcile
@@ -548,7 +563,7 @@ match after uncertain creation does not authorize another create. A later
 intentional same-name creation requires the earlier operation settled and the
 earlier created resource verified absent.
 Reconciliation preserves sanitized error codes and native agreement/sign-in
-human gates while retaining `state: "uncertain"` and CLI exit 69; it never
+human gates while retaining `state: "uncertain"` and CLI exit 5; it never
 retries a key mutation to recover from an authentication or persistence failure.
 
 Download exclusively reserves a new owner-only regular destination before the
@@ -593,7 +608,7 @@ Summaries/receipts allowlist only operation/scope/resource metadata, with a
 download SHA-256 on verified completion. They never contain creator metadata,
 raw vendor responses, cookies, CSRF, PEM, destinations or recovery paths.
 Uncertainty returns `{ ok: false, result: { state: "uncertain", ... } }` and exit
-69, optionally with a sanitized `errorCode` and native `requiresHuman` gate.
+5, optionally with a sanitized `errorCode` and native `requiresHuman` gate.
 Pre-effect refusals use the existing error envelope. An agreement-required
 response remains an explicit manual gate, never authorization to accept terms.
 This includes numeric `2100` in a non-PEM download error body; JSON is never
@@ -698,7 +713,7 @@ body, postcondition or persistence outcomes remain `state: "uncertain"` with no
 automatic PATCH retry. Read-only reconcile can verify the full intended
 postcondition or retain uncertainty; agreement/sign-in failures keep their
 native manual gates. CLI uncertainty is `{ok:false,result:{state:"uncertain",
-...}}` with exit 69. Pre-effect refusals use the existing sanitized error
+...}}` with exit 5. Pre-effect refusals use the existing sanitized error
 envelope. Public outputs contain resource/configuration metadata, never cookies,
 CSRF, raw server objects, creator information or private paths.
 Once a pending intent exists, reconciliation session-load failures also retain

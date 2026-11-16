@@ -477,13 +477,13 @@ describe("review login-services CLI", () => {
 
   it("refuses --root with no directory", async () => {
     const result = await run(["review", "login-services", "--root"]);
-    expect(result.code).toBe(64);
+    expect(result.code).toBe(2);
     expect(result.stderr).toBe("review login-services --root needs a directory\n");
   });
 
   it("fails cleanly on a missing root", async () => {
     const result = await run(["review", "login-services", "--root", join(tmpdir(), "adk-login-does-not-exist")]);
-    expect(result.code).toBe(66);
+    expect(result.code).toBe(4);
     expect(result.stderr).toContain("ENOENT");
   });
 });

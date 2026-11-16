@@ -462,7 +462,7 @@ describe("guarded SIWA lifecycle", () => {
     let output = "";
     const cli = kit.createCli({ stdout: v => { output += v; }, stderr: v => { output += v; } }, { developer: { fetch } });
     expect(await cli(["developer", "keys", "reconcile", "--team-id", teamId, "--environment", "test",
-      "--session-file", s.common.sessionFile, "--plan-file", s.common.planFile, "--json"])).toBe(69);
+      "--session-file", s.common.sessionFile, "--plan-file", s.common.planFile, "--json"])).toBe(5);
     expect(JSON.parse(output)).toMatchObject({ ok: false, result: {
       state: "uncertain", errorCode: code, requiresHuman: { type: "requiresHuman", code: human }
     } });
@@ -506,7 +506,7 @@ describe("guarded SIWA lifecycle", () => {
     let output = "";
     const cli = kit.createCli({ stdout: v => { output += v; }, stderr: v => { output += v; } }, { developer: { fetch: s.common.fetch } });
     expect(await cli(["developer", "keys", "reconcile", "--team-id", teamId, "--environment", "test",
-      "--session-file", s.common.sessionFile, "--plan-file", s.common.planFile, "--json"])).toBe(69);
+      "--session-file", s.common.sessionFile, "--plan-file", s.common.planFile, "--json"])).toBe(5);
     expect(JSON.parse(output)).toEqual({ ok: false, result });
     expect(output).not.toMatch(/requiresHuman|NEVER_EXPOSE/);
     expect(output).not.toContain(s.common.sessionFile);
@@ -541,8 +541,8 @@ describe("guarded SIWA lifecycle", () => {
       let output = "";
       const cli = kit.createCli({ stdout: v => { output += v; }, stderr: v => { output += v; } }, { developer: { fetch: s.common.fetch } });
       expect(await cli(["developer", "keys", "apply", "--team-id", teamId, "--environment", "test",
-        "--session-file", s.common.sessionFile, "--plan-file", s.common.planFile, "--json"])).toBe(69);
-      expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code } });
+        "--session-file", s.common.sessionFile, "--plan-file", s.common.planFile, "--json"])).toBe(5);
+      expect(JSON.parse(output)).toMatchObject({ error: { code } });
       expect(JSON.parse(output).result).toBeUndefined();
       expect(output).not.toMatch(/requiresHuman|NEVER_EXPOSE/);
       expect(s.seen).toHaveLength(count);
@@ -841,10 +841,10 @@ describe("lifecycle CLI validation", () => {
       "--primary-app-id", primaryAppId, "--primary-app-identifier", primaryAppIdentifier])).toBe(0);
     expect(JSON.parse(output)).toMatchObject({ ok: true, result: { action: "create" } });
     output = "";
-    expect(await cli(["developer", "keys", "apply", ...scope])).toBe(69);
+    expect(await cli(["developer", "keys", "apply", ...scope])).toBe(5);
     expect(JSON.parse(output)).toMatchObject({ ok: false, result: { state: "uncertain" } });
     output = "";
-    expect(await cli(["developer", "keys", "reconcile", ...scope])).toBe(69);
+    expect(await cli(["developer", "keys", "reconcile", ...scope])).toBe(5);
     expect(JSON.parse(output)).toMatchObject({ ok: false, result: { state: "uncertain" } });
     expect(output).not.toContain(secret);
   });
@@ -854,7 +854,7 @@ describe("lifecycle CLI validation", () => {
     let out = "";
     const cli = kit.createCli({ stdout: v => { out += v; }, stderr: v => { out += v; } }, { developer: { fetch } });
     expect(await cli(["developer", "keys", "get", "--key-id", "../create", "--team-id", teamId,
-      "--session-file", path("unused-session.json"), "--json"])).toBe(64);
+      "--session-file", path("unused-session.json"), "--json"])).toBe(2);
     expect(JSON.parse(out).error.code).toBe("invalid_arguments");
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -871,7 +871,7 @@ describe("lifecycle CLI validation", () => {
     const cli = kit.createCli({ stdout: v => { out += v; }, stderr: v => { out += v; } }, { developer: { fetch } });
     expect(await cli(["developer", "keys", "plan", "--team-id", teamId, "--environment", "test",
       "--primary-app-id", primaryAppId, "--primary-app-identifier", primaryAppIdentifier,
-      "--session-file", path("unused.json"), "--plan-file", path("unused-plan.json"), ...extra, "--json"])).toBe(64);
+      "--session-file", path("unused.json"), "--plan-file", path("unused-plan.json"), ...extra, "--json"])).toBe(2);
     expect(JSON.parse(out).error.code).toBe("invalid_arguments");
     expect(fetch).not.toHaveBeenCalled();
   });

@@ -296,7 +296,7 @@ describe("existing Services ID guarded configuration", () => {
     const s = setup();
     const result = await cli(["developer", "services", command, "--team-id", teamId,
       "--session-file", s.scope.sessionFile, "--json", ...extra], s.scope.fetch);
-    expect(result.code).toBe(64);
+    expect(result.code).toBe(2);
     expect(s.seen).toHaveLength(0);
   });
 
@@ -306,7 +306,7 @@ describe("existing Services ID guarded configuration", () => {
     writeFileSync(config, JSON.stringify({ ...desired, teamId: "OTHER12345" }), { mode: 0o600 });
     const result = await cli(["developer", "services", "plan", "--team-id", teamId, "--session-file", s.scope.sessionFile,
       "--environment", "test", "--plan-file", s.scope.planFile, "--config", config, "--json"], s.scope.fetch);
-    expect(result.code).toBe(64);
+    expect(result.code).toBe(2);
     expect(s.seen).toHaveLength(0);
   });
 
@@ -470,7 +470,7 @@ describe("existing Services ID guarded configuration", () => {
       value === 401 ? "developer_sign_in_required" : "developer_agreement_required" } });
     const result = await cli(["developer", "services", "reconcile", "--team-id", teamId, "--session-file", s.scope.sessionFile,
       "--environment", "test", "--plan-file", s.scope.planFile, "--json"], s.scope.fetch);
-    expect(result.code).toBe(69);
+    expect(result.code).toBe(5);
     expect(JSON.parse(result.output)).toMatchObject({ ok: false, result: { state: "uncertain", errorCode } });
     expect(patches(s)).toHaveLength(1);
   });
@@ -669,7 +669,7 @@ describe("existing Services ID guarded configuration", () => {
     writeFileSync(config, "null", { mode: 0o600 });
     const result = await cli(["developer", "services", "plan", "--team-id", teamId, "--session-file", s.scope.sessionFile,
       "--environment", "test", "--plan-file", s.scope.planFile, "--config", config, "--json"], s.scope.fetch);
-    expect(result.code).toBe(64);
+    expect(result.code).toBe(2);
     expect(s.seen).toHaveLength(0);
   });
 
@@ -1019,7 +1019,7 @@ describe("existing Services ID guarded configuration", () => {
     expect(await kit.reconcileDeveloperService(s.scope)).toEqual(receipt);
     const result = await cli(["developer", "services", "reconcile", "--team-id", teamId, "--session-file", s.scope.sessionFile,
       "--environment", "test", "--plan-file", s.scope.planFile, "--json"], s.scope.fetch);
-    expect(result.code).toBe(69);
+    expect(result.code).toBe(5);
     expect(JSON.parse(result.output)).toEqual({ ok: false, result: receipt });
     expect(result.output).not.toContain(secret);
     expect(result.output).not.toContain(s.scope.sessionFile);
@@ -1038,8 +1038,8 @@ describe("existing Services ID guarded configuration", () => {
     await expect(kit.applyDeveloperService(s.scope)).rejects.toMatchObject({ code });
     const result = await cli(["developer", "services", "apply", "--team-id", teamId, "--session-file", s.scope.sessionFile,
       "--environment", "test", "--plan-file", s.scope.planFile, "--json"], s.scope.fetch);
-    expect(result.code).toBe(69);
-    expect(JSON.parse(result.output)).toMatchObject({ ok: false, error: { code } });
+    expect(result.code).toBe(5);
+    expect(JSON.parse(result.output)).toMatchObject({ error: { code } });
     expect(JSON.parse(result.output)).not.toHaveProperty("result");
     expect(s.seen).toHaveLength(requestCount);
     expect(patches(s)).toHaveLength(0);
