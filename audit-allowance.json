@@ -1,0 +1,12 @@
+{
+  "allowed": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
+      "packageName": "picomatch",
+      "version": "4.0.7",
+      "reason": "ReDoS in repeated extglobs, with no fixed version: 4.0.7, the newest on npm, is affected. picomatch is a dev dependency only, through vite, vitest, tinyglobby and fdir, which match globs written in this repository, not user input. Remove this when picomatch ships a fix.",
+      "expiresOn": "2026-12-17"
+    }
+  ]
+}

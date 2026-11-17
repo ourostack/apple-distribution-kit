@@ -9,6 +9,7 @@
 
 ## Unreleased
 
+- CI's npm audit runs through `scripts/audit-allowance.cjs`, which lets an advisory with no fixed version through `audit-allowance.json` for an exact package version until a set date: today picomatch's ReDoS ([GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)), until 2026-12-17. Any other advisory, or an expired or incomplete allowance, still fails.
 - The command list and `--help` come from one command table (`src/command-table.ts`), rendered by the vendored Ouro AX kit (`src/ouro-ax/`). `--help --json` is machine-readable and lists every command with its effect.
 - `APPLE_DISTRIBUTION_ASC_BASE_URL` points App Store Connect calls at a mock. It is refused unless the host is 127.0.0.1 or ::1.
 - The Ouro AX X-ray and the action-claims check run in CI (`.github/workflows/ax.yml`), and the X-ray gates the build: every must claim holds against the made-up mock.
