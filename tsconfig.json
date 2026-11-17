@@ -20,5 +20,10 @@
   },
   "include": [
     "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/ouro-ax/xray.ts",
+    "src/ouro-ax/flows.ts",
+    "src/ouro-ax/surfaces.ts"
   ]
 }
