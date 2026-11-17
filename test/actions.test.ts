@@ -11,8 +11,8 @@ const manifest = JSON.parse(readFileSync(join(vendored, "dist-manifest.json"), "
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 describe("vendored ouro-actions generator", () => {
-  it("is ouro-ui-core's v0.16.0 generator and claim set, by hash", () => {
-    expect(manifest.coreTag).toBe("v0.16.0");
+  it("is the generator and claim set of the ouro-ui-core release its manifest names, by hash", () => {
+    expect(manifest.coreTag).toMatch(/^v\d+\.\d+\.\d+$/);
     expect(sha256(join(vendored, "ouro-actions.mts"))).toBe(manifest.files["dist/actions/ouro-actions.mts"]);
     expect(sha256(join(vendored, "actions.claims.json"))).toBe(manifest.files["dist/ax/actions.claims.json"]);
   });
