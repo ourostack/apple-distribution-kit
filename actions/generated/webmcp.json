@@ -1,9 +1,10 @@
 {
-  "generator": "ouro-actions 0.16.0",
+  "generator": "ouro-actions 1.4.1",
   "set": "apple-distribution-kit",
   "tools": [
     {
       "name": "manifest_validate",
+      "title": "Validate manifest",
       "description": "Validate the distribution manifest and say whether it is valid. Read-only.",
       "inputSchema": {
         "type": "object",
@@ -23,6 +24,7 @@
     },
     {
       "name": "asc_smoke",
+      "title": "Check App Store Connect access",
       "description": "Verify App Store Connect API credentials without printing secrets. Read-only.",
       "inputSchema": {
         "type": "object",
@@ -42,6 +44,7 @@
     },
     {
       "name": "review_status",
+      "title": "App Review status",
       "description": "Read the App Review state of every App Store version and review submission for one bundle id. Read-only.",
       "inputSchema": {
         "type": "object",
@@ -71,6 +74,7 @@
     },
     {
       "name": "review_login_services",
+      "title": "Check third-party login",
       "description": "Run the Guideline 4.8 pre-submission check on a project folder. Exits 1 on any finding. Read-only.",
       "inputSchema": {
         "type": "object",
