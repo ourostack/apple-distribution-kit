@@ -1,4 +1,4 @@
-import { defineCli, defineCommand, type FlagSpec } from "./ouro-ax/command.ts";
+import { defineCli, defineCommand, type FlagSpec } from "./ouro-ax/ax-command.ts";
 import { defineExitCodes } from "./ouro-ax/exit-codes.ts";
 import { outcome } from "./ouro-ax/outcome.ts";
 import { EXIT_CODE_TABLE } from "./exit-codes.ts";

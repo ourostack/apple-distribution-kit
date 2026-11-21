@@ -14,7 +14,7 @@ import { developerCommand, type DeveloperCliDependencies } from "./developer-cli
 import { EXIT } from "./exit-codes.js";
 import { cli as axCli } from "./command-table.js";
 import { runCli } from "./ouro-ax/cli.ts";
-import { parse } from "./ouro-ax/command.ts";
+import { parse } from "./ouro-ax/ax-command.ts";
 import { errorJson, errorLine, isAxError } from "./ouro-ax/problem.ts";
 import { DRY_RUN_FLAG } from "./ouro-ax/effects.ts";
 import { buildTestFlightRequests, planTestFlightSubmission, publishTestFlightRequests } from "./testflight.js";
